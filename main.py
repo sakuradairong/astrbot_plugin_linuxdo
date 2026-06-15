@@ -199,7 +199,27 @@ class LinuxDoPreviewPlugin(Star):
                 window.scrollTo(0, 0);
             }""")
 
-            page.wait_for_timeout(1000)  # 等待滚动稳定 + 懒加载图片
+            # ── 展开 Discourse 截断的长帖 ──
+            page.evaluate("""() => {
+                document.querySelectorAll('.expand-post').forEach(el => el.remove());
+                document.querySelectorAll('.cooked').forEach(el => {
+                    el.style.maxHeight = 'none';
+                    el.style.overflow = 'visible';
+                });
+                document.querySelectorAll('.gap-bottom').forEach(el => el.remove());
+                document.querySelectorAll('.topic-body').forEach(el => {
+                    el.style.maxHeight = 'none';
+                    el.style.overflow = 'visible';
+                });
+            }""")
+
+            # ── 滚动整个页面，触发懒加载图片 ──
+            total_height = page.evaluate("document.body.scrollHeight")
+            for y in range(0, total_height, 400):
+                page.evaluate(f"window.scrollTo(0, {y})")
+                page.wait_for_timeout(150)
+            page.evaluate("window.scrollTo(0, 0)")
+            page.wait_for_timeout(500)
 
             # ── 截图：全页模式，隐藏导航栏后内容干净 ──
             full_page = self.config.get("screenshot_full_page", True)
