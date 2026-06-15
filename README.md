@@ -98,7 +98,7 @@ https://linux.do/t/topic/1378383
 | `cache_ttl` | 缓存有效期（秒），设为 0 关闭缓存 | 1800 |
 | `max_content_length` | 内容摘要最大长度（字符） | 400 |
 | `screenshot_timeout` | 截图超时（秒） | 15 |
-| `screenshot_full_page` | 全页截图模式（false=仅视口，更实用） | false |
+| `screenshot_full_page` | 全页截图模式（true=完整帖子，false=仅视口） | true |
 
 ## ⚠️ 注意事项
 

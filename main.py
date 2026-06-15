@@ -198,8 +198,8 @@ class LinuxDoPreviewPlugin(Star):
 
             page.wait_for_timeout(1000)  # 等待滚动稳定 + 懒加载图片
 
-            # ── 截图：默认视口模式，更实用的预览尺寸 ──
-            full_page = self.config.get("screenshot_full_page", False)
+            # ── 截图：全页模式，隐藏导航栏后内容干净 ──
+            full_page = self.config.get("screenshot_full_page", True)
             page.screenshot(
                 path=str(save_path),
                 full_page=full_page,

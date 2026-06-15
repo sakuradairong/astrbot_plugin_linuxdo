@@ -20,7 +20,7 @@
   "screenshot_full_page": {
     "description": "Full page screenshot mode",
     "type": "bool",
-    "default": false,
-    "hint": "When false (default), captures viewport only — shows the first post cleanly. Set to true for full thread capture (larger file size)."
+    "default": true,
+    "hint": "When true (default), captures full page. Set to false for viewport-only preview."
   }
 }
