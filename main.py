@@ -180,7 +180,7 @@ class LinuxDoPreviewPlugin(Star):
             except Exception:
                 page.wait_for_timeout(3000)  # 回退：固定等待
 
-            # ── 隐藏固定元素，避免截图杂乱/重复 ──
+            # ── 隐藏非楼主内容，只保留第一篇帖子完整展示 ──
             page.evaluate("""() => {
                 const hide = (sel) => {
                     const el = document.querySelector(sel);
@@ -191,9 +191,12 @@ class LinuxDoPreviewPlugin(Star):
                 hide('.topic-navigation-wrapper');      // 帖子导航条
                 hide('.footer-nav.visible');            // 底部导航
 
-                // 滚动到第一篇帖子正文
-                const firstPost = document.querySelector('.cooked');
-                if (firstPost) firstPost.scrollIntoView({block: 'start'});
+                // 隐藏所有回复帖子，只保留楼主
+                const posts = document.querySelectorAll('.topic-post');
+                posts.forEach((post, i) => { if (i > 0) post.style.display = 'none'; });
+
+                // 滚动到顶部
+                window.scrollTo(0, 0);
             }""")
 
             page.wait_for_timeout(1000)  # 等待滚动稳定 + 懒加载图片
