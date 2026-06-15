@@ -120,11 +120,15 @@ class LinuxDoPreviewPlugin(Star):
         url_hash = hashlib.md5(url.encode()).hexdigest()
         screenshot_path = self.screenshot_dir / f"{url_hash}.png"
         cache_ttl = self.config.get("cache_ttl", 1800)
-        cache_valid = (
-            screenshot_path.exists()
-            and cache_ttl > 0
-            and time.time() - screenshot_path.stat().st_mtime < cache_ttl
-        )
+        screenshot_is_valid = False
+        if screenshot_path.exists():
+            sz = screenshot_path.stat().st_size
+            age = time.time() - screenshot_path.stat().st_mtime
+            screenshot_is_valid = (
+                cache_ttl > 0
+                and age < cache_ttl
+                and sz > 50 * 1024  # 小于 50KB 的截图视为无效（黑屏/空白）
+            )
 
         StealthyFetcher.adaptive = True  # type: ignore[union-attr]
 
@@ -139,12 +143,15 @@ class LinuxDoPreviewPlugin(Star):
             logger.info(f"[LinuxDoPreview] 标题: {title}")
 
             # ── Step 2: 新建标签页（复用 cf_clearance）截图 ──
-            if not cache_valid:
+            if not screenshot_is_valid:
                 screenshot_path = self._take_screenshot(
                     session, url, screenshot_path
                 )
             else:
                 self._stats["cache_hit"] += 1
+            logger.info(
+                f"[LinuxDoPreview] 使用缓存截图: {screenshot_path.name}"
+            )
 
         summary = self._build_summary(title, content, url)
         return screenshot_path, summary
