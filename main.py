@@ -169,17 +169,43 @@ class LinuxDoPreviewPlugin(Star):
                 return None
 
             page = ctx.new_page()
-            page.set_viewport_size({"width": 1280, "height": 1024})
+            page.set_viewport_size({"width": 1280, "height": 900})
 
-            # 导航（已有 cf_clearance cookie，不应再触发 Cloudflare）
-            page.goto(url, wait_until="load", timeout=timeout_ms)
-            page.wait_for_timeout(3000)
+            # ── 导航：等 networkidle 确保 JS 动态内容加载完成 ──
+            page.goto(url, wait_until="networkidle", timeout=timeout_ms)
 
+            # ── 等待 Discourse 帖子内容渲染 ──
+            try:
+                page.wait_for_selector(".cooked", timeout=min(timeout_ms, 10000))
+            except Exception:
+                page.wait_for_timeout(3000)  # 回退：固定等待
+
+            # ── 隐藏固定元素，避免截图杂乱/重复 ──
+            page.evaluate("""() => {
+                const hide = (sel) => {
+                    const el = document.querySelector(sel);
+                    if (el) el.style.display = 'none';
+                };
+                hide('.d-header');                      // 顶部导航栏
+                hide('.sidebar-wrapper');               // 左侧边栏
+                hide('.topic-navigation-wrapper');      // 帖子导航条
+                hide('.footer-nav.visible');            // 底部导航
+
+                // 滚动到第一篇帖子正文
+                const firstPost = document.querySelector('.cooked');
+                if (firstPost) firstPost.scrollIntoView({block: 'start'});
+            }""")
+
+            page.wait_for_timeout(1000)  # 等待滚动稳定 + 懒加载图片
+
+            # ── 截图：默认视口模式，更实用的预览尺寸 ──
+            full_page = self.config.get("screenshot_full_page", False)
             page.screenshot(
                 path=str(save_path),
-                full_page=True,
+                full_page=full_page,
                 timeout=timeout_ms,
             )
+
             sz = save_path.stat().st_size
             logger.info(
                 f"[LinuxDoPreview] 截图保存: {save_path.name} ({sz / 1024:.1f} KB)"

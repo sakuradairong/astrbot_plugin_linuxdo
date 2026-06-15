@@ -16,5 +16,11 @@
     "type": "int",
     "default": 15,
     "hint": "Max seconds to wait for page screenshot."
+  },
+  "screenshot_full_page": {
+    "description": "Full page screenshot mode",
+    "type": "bool",
+    "default": false,
+    "hint": "When false (default), captures viewport only — shows the first post cleanly. Set to true for full thread capture (larger file size)."
   }
 }

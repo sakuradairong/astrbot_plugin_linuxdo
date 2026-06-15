@@ -7,7 +7,7 @@
 
 - 🔗 **自动检测** — 聊天中出现 `linux.do` 链接立即触发
 - 🛡️ **绕过 Cloudflare** — 使用 [Scrapling](https://github.com/D4Vinci/Scrapling) 的 StealthySession 自动解 Turnstile
-- 📸 **截图预览** — 全页面截图（1280×1024）
+- 📸 **智能截图** — 视口截图显示主帖，自动隐藏导航栏/侧边栏，可选全页模式
 - 📝 **内容摘要** — 提取标题 + 正文前 400 字
 - ⚡ **异步非阻塞** — Scrapling 在独立线程池运行，不阻塞 AstrBot 主循环
 - 💾 **缓存机制** — 30 分钟内相同链接直接返回缓存截图
@@ -98,6 +98,7 @@ https://linux.do/t/topic/1378383
 | `cache_ttl` | 缓存有效期（秒），设为 0 关闭缓存 | 1800 |
 | `max_content_length` | 内容摘要最大长度（字符） | 400 |
 | `screenshot_timeout` | 截图超时（秒） | 15 |
+| `screenshot_full_page` | 全页截图模式（false=仅视口，更实用） | false |
 
 ## ⚠️ 注意事项
 
