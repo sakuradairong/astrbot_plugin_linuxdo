@@ -7,7 +7,6 @@ astrbot_plugin_linuxdo - LinuxDo 链接检测 & 预览截图插件
 """
 
 import re
-import os
 import asyncio
 import time
 import hashlib
@@ -17,11 +16,10 @@ import html as html_mod
 
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
-from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
+from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star
 from astrbot.api import logger
 from astrbot.api import AstrBotConfig
-import astrbot.api.message_components as Comp
 
 try:
     from scrapling.fetchers import StealthyFetcher, StealthySession as _StealthySession
