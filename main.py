@@ -13,6 +13,7 @@ import hashlib
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 import html as html_mod
+import threading
 
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
@@ -22,12 +23,11 @@ from astrbot.api import logger
 from astrbot.api import AstrBotConfig
 
 try:
-    from scrapling.fetchers import StealthyFetcher, StealthySession as _StealthySession
+    from scrapling.fetchers import StealthySession as _StealthySession
     from lxml import html as _lh
     SCRAPLING_AVAILABLE = True
 except ImportError:
     SCRAPLING_AVAILABLE = False
-    StealthyFetcher = None
     _StealthySession = None
     _lh = None
 
@@ -53,6 +53,7 @@ class LinuxDoPreviewPlugin(Star):
             )
 
         self._stats = {"total": 0, "cache_hit": 0, "error": 0}
+        self._stats_lock = threading.Lock()
 
     async def terminate(self):
         _EXECUTOR.shutdown(wait=False)
@@ -94,10 +95,12 @@ class LinuxDoPreviewPlugin(Star):
             if summary:
                 yield event.plain_result(summary)
 
-            self._stats["total"] += 1
+            with self._stats_lock:
+                self._stats["total"] += 1
 
         except Exception as e:
-            self._stats["error"] += 1
+            with self._stats_lock:
+                self._stats["error"] += 1
             logger.error(f"[LinuxDoPreview] 预览失败: {type(e).__name__}: {e}")
             yield event.plain_result(f"❌ 预览获取失败: {str(e)[:200]}")
 
@@ -130,8 +133,6 @@ class LinuxDoPreviewPlugin(Star):
                 and sz > 50 * 1024  # 小于 50KB 的截图视为无效（黑屏/空白）
             )
 
-        StealthyFetcher.adaptive = True  # type: ignore[union-attr]
-
         with _StealthySession(  # type: ignore[union-attr]
             headless=True, solve_cloudflare=True
         ) as session:
@@ -148,7 +149,8 @@ class LinuxDoPreviewPlugin(Star):
                     session, url, screenshot_path
                 )
             else:
-                self._stats["cache_hit"] += 1
+                with self._stats_lock:
+                    self._stats["cache_hit"] += 1
             logger.info(
                 f"[LinuxDoPreview] 使用缓存截图: {screenshot_path.name}"
             )
@@ -158,10 +160,9 @@ class LinuxDoPreviewPlugin(Star):
 
     # ─────────── 截图（复用 StealthySession 的浏览器上下文） ───────────
 
-    @staticmethod
-    @staticmethod
-    def _take_screenshot(session, url: str, save_path: Path) -> Path | None:
+    def _take_screenshot(self, session, url: str, save_path: Path) -> Path | None:
         """在已有 cf_clearance 的上下文中新建标签页截图"""
+        timeout_ms = self.config.get("screenshot_timeout", 15) * 1000
         try:
             ctx = session.context
             if not ctx:
@@ -171,13 +172,13 @@ class LinuxDoPreviewPlugin(Star):
             page.set_viewport_size({"width": 1280, "height": 1024})
 
             # 导航（已有 cf_clearance cookie，不应再触发 Cloudflare）
-            page.goto(url, wait_until="load", timeout=30000)
+            page.goto(url, wait_until="load", timeout=timeout_ms)
             page.wait_for_timeout(3000)
 
             page.screenshot(
                 path=str(save_path),
                 full_page=True,
-                timeout=20000,
+                timeout=timeout_ms,
             )
             sz = save_path.stat().st_size
             logger.info(
@@ -238,12 +239,11 @@ class LinuxDoPreviewPlugin(Star):
                 break
         return "\n\n".join(parts)
 
-    @staticmethod
-    def _build_summary(title: str, content: str, url: str) -> str:
+    def _build_summary(self, title: str, content: str, url: str) -> str:
         lines = [f"📌 {title}"]
         if content:
             lines.append("")
-            max_len = 400
+            max_len = self.config.get("max_content_length", 400)
             lines.append(content[:max_len])
             if len(content) > max_len:
                 lines[-1] += "…"

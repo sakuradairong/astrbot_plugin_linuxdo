@@ -6,8 +6,8 @@
 ## ✨ 功能
 
 - 🔗 **自动检测** — 聊天中出现 `linux.do` 链接立即触发
-- 🛡️ **绕过 Cloudflare** — 使用 [Scrapling](https://github.com/D4Vinci/Scrapling) 的 StealthyFetcher 自动解 Turnstile
-- 📸 **截图预览** — 全页面截图（1920×1080）
+- 🛡️ **绕过 Cloudflare** — 使用 [Scrapling](https://github.com/D4Vinci/Scrapling) 的 StealthySession 自动解 Turnstile
+- 📸 **截图预览** — 全页面截图（1280×1024）
 - 📝 **内容摘要** — 提取标题 + 正文前 400 字
 - ⚡ **异步非阻塞** — Scrapling 在独立线程池运行，不阻塞 AstrBot 主循环
 - 💾 **缓存机制** — 30 分钟内相同链接直接返回缓存截图
@@ -66,7 +66,7 @@ https://linux.do/t/topic/1378383
 │ linux.do/xx  │              │  事件监听器   │
 └─────────────┘              └──────┬───────┘
                                     │
-                          asyncio.to_thread()
+                          run_in_executor()
                                     │
                            ┌───────▼────────┐
                            │  Thread Pool    │
@@ -91,11 +91,13 @@ https://linux.do/t/topic/1378383
 
 ## ⚙️ 配置
 
-通过 `_conf_schema.json` 支持以下配置（可选）：
+通过 `_conf_schema.json` 支持以下配置：
 
-- `cache_ttl`: 缓存有效期（秒，默认 1800）
-- `screenshot_width`: 截图宽度（默认 1920）
-- `max_content_length`: 内容摘要最大长度（默认 400）
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `cache_ttl` | 缓存有效期（秒），设为 0 关闭缓存 | 1800 |
+| `max_content_length` | 内容摘要最大长度（字符） | 400 |
+| `screenshot_timeout` | 截图超时（秒） | 15 |
 
 ## ⚠️ 注意事项
 
