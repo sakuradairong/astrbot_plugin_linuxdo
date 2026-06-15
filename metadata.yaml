@@ -1,0 +1,10 @@
+name: astrbot_plugin_linuxdo
+display_name: LinuxDo Preview
+short_desc: 自动检测 linux.do 链接，绕过 Cloudflare 截图发送预览
+desc: >
+  自动检测聊天消息中的 linux.do 链接，使用 Scrapling 的 StealthyFetcher
+  绕过 Cloudflare Turnstile 防护，获取页面截图和内容摘要并发送预览。
+  支持缓存避免重复请求，异步非阻塞设计。
+author: astrbot_plugin_linuxdo
+version: 1.0.0
+astrbot_version: ">=4.16"

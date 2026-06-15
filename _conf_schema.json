@@ -1,0 +1,20 @@
+{
+  "cache_ttl": {
+    "description": "Screenshot cache TTL (seconds)",
+    "type": "int",
+    "default": 1800,
+    "hint": "Cached screenshot validity period. Default 1800s (30min). Set to 0 to disable caching."
+  },
+  "max_content_length": {
+    "description": "Max content preview length (chars)",
+    "type": "int",
+    "default": 400,
+    "hint": "Maximum characters of text preview extracted from the page."
+  },
+  "screenshot_timeout": {
+    "description": "Screenshot timeout (seconds)",
+    "type": "int",
+    "default": 15,
+    "hint": "Max seconds to wait for page screenshot."
+  }
+}
