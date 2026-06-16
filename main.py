@@ -551,7 +551,7 @@ class LinuxDoPreviewPlugin(Star):
         """检查当前会话是否已登录"""
         try:
             resp = session.fetch(
-                "https://linux.do/session/current_user.json", timeout=10
+                "https://linux.do/session/current_user.json", timeout=30000
             )
             if resp.status != 200:
                 return False
