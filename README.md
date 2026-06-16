@@ -7,8 +7,9 @@
 
 - 🔗 **自动检测** — 聊天中出现 `linux.do` 链接立即触发
 - 🛡️ **绕过 Cloudflare** — 使用 [Scrapling](https://github.com/D4Vinci/Scrapling) 的 StealthySession 自动解 Turnstile
-- 📸 **智能截图** — 视口截图显示主帖，自动隐藏导航栏/侧边栏，可选全页模式
-- 📝 **内容摘要** — 提取标题 + 正文前 400 字
+- 📸 **智能截图** — 自适应卡片渲染，完整楼主内容，无空白/截断
+- 📝 **内容摘要** — 通过 Discourse JSON API 提取完整楼主内容（无截断）
+- 🔒 **账户登录** — 可选配置账号密码，访问受限分类、私信等非公开内容
 - ⚡ **异步非阻塞** — Scrapling 在独立线程池运行，不阻塞 AstrBot 主循环
 - 💾 **缓存机制** — 30 分钟内相同链接直接返回缓存截图
 - 🧹 **缓存管理** — `/linuxdo_stats` 查看统计，`/linuxdo_clean` 清理缓存
@@ -99,6 +100,20 @@ https://linux.do/t/topic/1378383
 | `max_content_length` | 内容摘要最大长度（字符） | 400 |
 | `screenshot_timeout` | 截图超时（秒） | 15 |
 | `screenshot_full_page` | 全页截图模式（true=完整帖子，false=仅视口） | true |
+| `use_api_render` | 使用 API + 自定义 HTML 渲染（推荐） | true |
+| `linuxdo_username` | LinuxDo 用户名，配置后自动登录 | （空） |
+| `linuxdo_password` | LinuxDo 密码，⚠️ 明文存储 | （空） |
+
+## 🔑 账户登录（可选）
+
+默认以匿名身份访问 linux.do。如需查看受限分类、私信等非公开内容：
+
+1. 在 AstrBot WebUI 插件配置中填写 `linuxdo_username` 和 `linuxdo_password`
+2. 插件会在每次请求时自动通过 Playwright 提交登录表单
+3. 登录成功后，同一会话内所有 API 调用均带认证态
+4. 登录失败（凭据错误、风控）时自动降级为匿名访问，不影响正常使用
+
+**安全提示**：密码以明文存储在配置文件中，建议使用专用低权限账户。
 
 ## ⚠️ 注意事项
 
