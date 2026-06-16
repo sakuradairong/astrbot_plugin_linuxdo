@@ -3,6 +3,16 @@
 本项目所有显著变更都记录在此文件中。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.1] - 2026-06-16
+
+### 修复
+- **截图渲染清理 Discourse meta 残留**：`_normalize_cooked_urls` 剥离 `<div class="lightbox-wrapper">` 时改为仅保留 `<img>`，丢弃内嵌的 `<div class="meta">`（文件名、尺寸、下载按钮等），避免加载失败后出现 "image 988×703 46.8 KB" 这类文字
+- **Broken image 不再占据巨大空白**：`_render_html_screenshot` 在图片加载完成后用 JS 检测 `naturalWidth==0` 的图并 `img.remove()`，消除 988×703 像素的预留空白
+- **代码块 toolbar 不再泄露**：剥离 `<div class="codeblock-buttons">` 与 `<pre>` 内的 `<div class="pre-actions">`
+- **Download 装饰链接剥离**：移除 Discourse 主题包渲染的 `<a class="...download...">` 装饰
+- **头像占位符处理**：仅当 `avatar_template` 含 `{size}` 时才替换，避免字面量 `{size}` 被当作 URL 一部分去请求导致 404
+- **头像优雅 fallback**：未提供 URL 或加载失败时，自动渲染带首字母的渐变圆形（onerror + CSS fallback）
+
 ## [1.1.0] - 2026-06-16
 
 ### 新增
@@ -54,5 +64,6 @@
 - 截图时只截取首楼（隐藏所有回复帖）
 - 通过展开 Discourse 截断的内容 + 滚动触发懒加载，确保完整捕获楼主贴
 
+[1.1.1]: https://github.com/sakuradairong/astrbot_plugin_linuxdo/compare/f17dd28...26336b7
 [1.1.0]: https://github.com/sakuradairong/astrbot_plugin_linuxdo/compare/da9ad4d...6de4c31
 [1.0.0]: https://github.com/sakuradairong/astrbot_plugin_linuxdo/releases/tag/5f41aa7

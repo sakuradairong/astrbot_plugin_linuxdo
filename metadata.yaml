@@ -8,6 +8,6 @@ desc: >
   2) 传统方案：访问原页 + JS 隐藏非楼主 + 展开截断后截图。
   支持截图缓存避免重复请求，异步非阻塞设计。
 author: RainySY
-version: 1.1.0
+version: 1.1.1
 repo: https://github.com/sakuradairong/astrbot_plugin_linuxdo
 astrbot_version: ">=4.16"
