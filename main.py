@@ -469,18 +469,45 @@ class LinuxDoPreviewPlugin(Star):
                 pass
             page.wait_for_timeout(1000)
 
-            # 直接用 fetch POST /session.json（表单编码，不设 XHR 头）
-            # Discourse 对非 XHR 请求用 _forum_session cookie 验证 CSRF
+            # 先获取 CSRF token，再用它 POST 登录
+            # Discourse 在 meta[name="csrf-token"] 或 /session/csrf.json 中提供 token
             result = page.evaluate("""async (creds) => {
+                // 尝试从 meta 标签获取 CSRF token
+                let csrf = '';
+                const meta = document.querySelector('meta[name="csrf-token"]');
+                if (meta) csrf = meta.getAttribute('content') || '';
+                // 如果 meta 没有，从 /session/csrf.json 获取
+                if (!csrf) {
+                    try {
+                        const csrfResp = await fetch('/session/csrf.json', {
+                            credentials: 'include',
+                        });
+                        if (csrfResp.ok) {
+                            const csrfData = await csrfResp.json();
+                            csrf = csrfData.csrf || '';
+                        }
+                    } catch(e) {}
+                }
+                // 从 cookie 中提取（Discourse 把 CSRF token 编码在 _forum_session cookie 中）
+                if (!csrf) {
+                    const m = document.cookie.match(/(?:^|;\\s*)_forum_session=([^;]*)/);
+                    if (m) csrf = decodeURIComponent(m[1]);
+                }
+                if (!csrf) {
+                    return { ok: false, status: 0, data: ['no_csrf_token'] };
+                }
                 const body = new URLSearchParams({
                     login: creds.login,
                     password: creds.password,
+                    authenticity_token: csrf,
                     remember_me: 'true',
                 }).toString();
                 const resp = await fetch('/session.json', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/x-www-form-urlencoded',
+                        'X-CSRF-Token': csrf,
+                        'X-Requested-With': 'XMLHttpRequest',
                     },
                     body: body,
                     credentials: 'include',
@@ -500,14 +527,20 @@ class LinuxDoPreviewPlugin(Star):
                 return None
 
             if not result.get("ok"):
-                data = result.get("data") or {}
-                err = data.get("error") or data.get("reason") or f"http_{result.get('status')}"
+                raw_data = result.get("data")
+                # data 可能是列表 (如 ['BAD CSRF']) 或字典
+                if isinstance(raw_data, dict):
+                    err = raw_data.get("error") or raw_data.get("reason") or str(raw_data)
+                elif isinstance(raw_data, list):
+                    err = ", ".join(str(x) for x in raw_data)
+                else:
+                    err = str(raw_data) if raw_data else f"http_{result.get('status')}"
                 logger.warning(f"[LinuxDoPreview] 登录失败: {err}")
                 return None
 
             # 登录成功，从浏览器上下文抓取更新后的 _forum_session cookie
-            data = result.get("data") or {}
-            current_user = data.get("current_user") or {}
+            raw_data = result.get("data")
+            current_user = (raw_data.get("current_user") or {}) if isinstance(raw_data, dict) else {}
             if current_user.get("username"):
                 # 用 page.evaluate 获取 cookie（ctx.cookies() 在 patchright 中可能返回空）
                 cookie_val = page.evaluate("""() => {
