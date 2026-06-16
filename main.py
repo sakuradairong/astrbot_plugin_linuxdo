@@ -469,52 +469,27 @@ class LinuxDoPreviewPlugin(Star):
                 pass
             page.wait_for_timeout(1000)
 
-            # 先获取 CSRF token，再用它 POST 登录
-            # Discourse 在 meta[name="csrf-token"] 或 /session/csrf.json 中提供 token
+            # 用表单 POST 到 /login（Discourse 标准登录端点）
+            # /session.json 被限制返回 403，但 /login 正常工作
             result = page.evaluate("""async (creds) => {
-                // 尝试从 meta 标签获取 CSRF token
-                let csrf = '';
-                const meta = document.querySelector('meta[name="csrf-token"]');
-                if (meta) csrf = meta.getAttribute('content') || '';
-                // 如果 meta 没有，从 /session/csrf.json 获取
-                if (!csrf) {
-                    try {
-                        const csrfResp = await fetch('/session/csrf.json', {
-                            credentials: 'include',
-                        });
-                        if (csrfResp.ok) {
-                            const csrfData = await csrfResp.json();
-                            csrf = csrfData.csrf || '';
-                        }
-                    } catch(e) {}
+                try {
+                    const body = new URLSearchParams({
+                        username: creds.login,
+                        password: creds.password,
+                        redirect: '/',
+                    }).toString();
+                    const resp = await fetch('/login', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                        },
+                        body: body,
+                        credentials: 'include',
+                    });
+                    return { ok: resp.ok, status: resp.status, url: resp.url };
+                } catch(e) {
+                    return { ok: false, status: 0, error: e.message };
                 }
-                // 从 cookie 中提取（Discourse 把 CSRF token 编码在 _forum_session cookie 中）
-                if (!csrf) {
-                    const m = document.cookie.match(/(?:^|;\\s*)_forum_session=([^;]*)/);
-                    if (m) csrf = decodeURIComponent(m[1]);
-                }
-                if (!csrf) {
-                    return { ok: false, status: 0, data: ['no_csrf_token'] };
-                }
-                const body = new URLSearchParams({
-                    login: creds.login,
-                    password: creds.password,
-                    authenticity_token: csrf,
-                    remember_me: 'true',
-                }).toString();
-                const resp = await fetch('/session.json', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                        'X-CSRF-Token': csrf,
-                        'X-Requested-With': 'XMLHttpRequest',
-                    },
-                    body: body,
-                    credentials: 'include',
-                });
-                let data = null;
-                try { data = await resp.json(); } catch(e) {}
-                return { ok: resp.ok, status: resp.status, data: data };
             }""", {"login": username, "password": password})
 
             logger.info(f"[LinuxDoPreview] fetch result type={type(result).__name__}, val={str(result)[:200]}")
@@ -527,43 +502,33 @@ class LinuxDoPreviewPlugin(Star):
                 return None
 
             if not result.get("ok"):
-                raw_data = result.get("data")
-                # data 可能是列表 (如 ['BAD CSRF']) 或字典
-                if isinstance(raw_data, dict):
-                    err = raw_data.get("error") or raw_data.get("reason") or str(raw_data)
-                elif isinstance(raw_data, list):
-                    err = ", ".join(str(x) for x in raw_data)
-                else:
-                    err = str(raw_data) if raw_data else f"http_{result.get('status')}"
+                err = result.get("error") or result.get("data") or f"http_{result.get('status')}"
                 logger.warning(f"[LinuxDoPreview] 登录失败: {err}")
                 return None
 
-            # 登录成功，从浏览器上下文抓取更新后的 _forum_session cookie
-            raw_data = result.get("data")
-            current_user = (raw_data.get("current_user") or {}) if isinstance(raw_data, dict) else {}
-            if current_user.get("username"):
-                # 用 page.evaluate 获取 cookie（ctx.cookies() 在 patchright 中可能返回空）
-                cookie_val = page.evaluate("""() => {
-                    const m = document.cookie.match(/(?:^|;\\s*)_forum_session=([^;]*)/);
-                    return m ? decodeURIComponent(m[1]) : null;
-                }""")
-                if cookie_val:
-                    logger.info(f"[LinuxDoPreview] 自动登录成功: {current_user.get('username')}, cookie={len(cookie_val)} chars")
-                    return cookie_val
-                # 回退：尝试 ctx.cookies()
-                try:
-                    for c in (ctx.cookies() or []):
-                        if isinstance(c, dict) and c.get("name") == "_forum_session":
-                            val = c.get("value", "")
-                            if val:
-                                logger.info(f"[LinuxDoPreview] 自动登录成功: {current_user.get('username')}, cookie={len(val)} chars (ctx)")
-                                return val
-                except Exception:
-                    pass
-                logger.warning("[LinuxDoPreview] 登录成功但未找到 _forum_session cookie")
-                return None
+            # /login POST 返回 200 表示登录成功（返回 HTML 页面，不是 JSON）
+            # 登录成功后浏览器自动设置 _forum_session cookie
+            # 用 page.evaluate 获取 cookie
+            cookie_val = page.evaluate("""() => {
+                const m = document.cookie.match(/(?:^|;\\s*)_forum_session=([^;]*)/);
+                return m ? decodeURIComponent(m[1]) : null;
+            }""")
+            if cookie_val:
+                logger.info(f"[LinuxDoPreview] 自动登录成功, cookie={len(cookie_val)} chars")
+                return cookie_val
 
-            logger.warning(f"[LinuxDoPreview] 登录响应异常: {result}")
+            # 回退：尝试 ctx.cookies()
+            try:
+                for c in (ctx.cookies() or []):
+                    if isinstance(c, dict) and c.get("name") == "_forum_session":
+                        val = c.get("value", "")
+                        if val:
+                            logger.info(f"[LinuxDoPreview] 自动登录成功, cookie={len(val)} chars (ctx)")
+                            return val
+            except Exception:
+                pass
+
+            logger.warning("[LinuxDoPreview] 登录成功但未找到 _forum_session cookie")
             return None
         except Exception as e:
             logger.warning(f"[LinuxDoPreview] 自动登录异常: {type(e).__name__}: {str(e)[:150]}")
