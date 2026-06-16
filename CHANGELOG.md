@@ -3,6 +3,19 @@
 本项目所有显著变更都记录在此文件中。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.2.1] - 2026-06-16
+
+### 修复
+- **修复登录始终“假成功”问题**：linux.do 登录表单启用了 hCaptcha 人机验证，自动化浏览器无法通过，原自动登录永远不可能成功；而旧代码抓取的是匿名会话本就存在的 `_forum_session` cookie 并误报“自动登录成功”，导致受限主题一直返回 404。现在改为明确提示自动登录不可用，降级为匿名访问
+- **修复 Cookie 注入跨请求丢失**：StealthySession 每次请求都是新建的浏览器上下文，旧代码首次校验后缓存了登录态却不再向新会话注入 Cookie，导致只有插件加载后第一条消息能登录、之后全部匿名。现在改为【每个会话都重新注入】配置的 Cookie
+- **更换可靠的登录校验端点**：`/session/current_user.json` 对匿名用户也返回 404，无法区分登录与否；改用 `/notifications.json`（匿名 403、登录 200）
+- **Cookie 配置支持多格式**：`linuxdo_session_cookie` 现支持完整 Cookie 头（`_t=xxx; _forum_session=yyy`）、单个 `name=value`（已知 cookie 名）、以及裸值（向后兼容当作 `_forum_session`）。Discourse 会话值是 base64 常带 `=` 填充，解析器已正确区分裸值与 name=value
+
+### 变更
+- 移除无效的账号密码自动登录代码（`_auto_login_and_capture`）；`linuxdo_username` / `linuxdo_password` 配置项保留仅为兼容，不再生效
+- 推荐改用长效的 `_t` cookie（约 1 年有效期）而非短效 `_forum_session`（约 2 周）
+- 配置项 hint、README 登录说明同步更新
+
 ## [1.2.0] - 2026-06-16
 
 ### 新增

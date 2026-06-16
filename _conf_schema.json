@@ -30,21 +30,21 @@
     "hint": "启用后用 Discourse JSON API 拉数据+自定义 HTML 模板渲染（推荐，完整、干净、不受页面截断/懒加载影响）；关闭则走传统页面截图方案。"
   },
   "linuxdo_session_cookie": {
-    "description": "LinuxDo 会话 Cookie（可选）",
+    "description": "LinuxDo 会话 Cookie（访问受限主题必填）",
     "type": "string",
     "default": "",
-    "hint": "从浏览器 DevTools 复制 _forum_session cookie 值。登录 linux.do → F12 → Application → Cookies → linux.do → _forum_session → 复制 Value。留空则保持匿名访问。"
+    "hint": "登录 linux.do → F12 → Application → Cookies → linux.do → 复制 _t（推荐，长效约 1 年）或 _forum_session（短期）的 Value 粘贴到这里。也支持完整 Cookie 头格式如『_t=xxx; _forum_session=yyy』。留空则匿名访问（无法读取需登录才能看的主题）。"
   },
   "linuxdo_username": {
-    "description": "LinuxDo 用户名（可选，自动登录）",
+    "description": "LinuxDo 用户名（已弃用）",
     "type": "string",
     "default": "",
-    "hint": "配置后插件自动登录获取会话 Cookie，无需手动复制。留空则使用 linuxdo_session_cookie 或匿名访问。"
+    "hint": "⚠️ linux.do 登录启用了 hCaptcha 人机验证，账号密码自动登录已不可用（保留此项仅为兼容）。请改用上方 linuxdo_session_cookie。"
   },
   "linuxdo_password": {
-    "description": "LinuxDo 密码（可选，自动登录）",
+    "description": "LinuxDo 密码（已弃用）",
     "type": "string",
     "default": "",
-    "hint": "配合 linuxdo_username 使用，插件自动登录并获取会话 Cookie。密码以明文存储，建议使用专用低权限账户。"
+    "hint": "⚠️ 配合 linuxdo_username 的自动登录已因 hCaptcha 失效。请改用 linuxdo_session_cookie（浏览器复制 _t）。"
   }
 }

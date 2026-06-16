@@ -447,78 +447,55 @@ class LinuxDoPreviewPlugin(Star):
         p = self.config.get("linuxdo_password", "") or ""
         return bool(u.strip() and p.strip())
 
-    def _auto_login_and_capture(self, session) -> str | None:
-        """用 Playwright 自动登录 linux.do 并抓取 _forum_session cookie
+    _COOKIE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
+    # linux.do / Discourse / Cloudflare 可能出现的 cookie 名
+    _KNOWN_COOKIE_NAMES = {
+        "_t", "_forum_session", "cf_clearance", "_bypass_cache", "dosp",
+        "_pf", "_bblean", "theme_ids", "previousVisitAt", "messages-last-modified",
+        "_ga", "_gid", "_gcl_au",
+    }
 
-        Returns: cookie value 或 None
+    def _parse_cookie_pairs(self, cookie_str: str) -> list[dict]:
+        """将用户配置的 cookie 字符串解析为 (name, value) 列表。
+
+        支持三种输入：
+        - 完整 Cookie 头（含分号）：'_t=xxx; _forum_session=yyy'
+        - 单个 'name=value'（name 须是已知 cookie 名）：'_t=xxx'
+        - 单个裸值（直接当作 _forum_session 的值，向后兼容）
+
+        说明：Discourse 的 _forum_session 值是 base64，常带 '=' 填充，因此不能
+        仅凭是否含 '=' 判断格式，否则会把裸值误判成 name=value。
         """
-        username = (self.config.get("linuxdo_username", "") or "").strip()
-        password = (self.config.get("linuxdo_password", "") or "").strip()
-        ctx = session.context
-        if not ctx or not username or not password:
-            return None
-
-        page = None
-        try:
-            page = ctx.new_page()
-            # 先访问主页建立 CF clearance
-            page.goto("https://linux.do/", wait_until="domcontentloaded", timeout=30000)
-            try:
-                page.wait_for_load_state("networkidle", timeout=10000)
-            except Exception:
-                pass
-            page.wait_for_timeout(2000)
-
-            # 导航到 /login 页面（Discourse SPA 内部导航，不触发 CF）
-            page.evaluate("window.location.href = 'https://linux.do/login'")
-            page.wait_for_timeout(5000)
-            try:
-                page.wait_for_load_state("networkidle", timeout=10000)
-            except Exception:
-                pass
-
-            # 等待登录表单出现
-            try:
-                page.wait_for_selector('#login-account-name', timeout=15000)
-            except Exception:
-                logger.warning("[LinuxDoPreview] 登录表单未出现")
-                return None
-
-            page.fill('#login-account-name', username)
-            page.fill('#login-account-password', password)
-            page.click('#login-button')
-            page.wait_for_timeout(8000)  # 等待登录完成
-
-            # 从 ctx.cookies() 获取 HttpOnly _forum_session cookie
-            cookie_val = None
-            try:
-                all_cookies = session.context.cookies()
-                logger.info(f"[LinuxDoPreview] ctx.cookies() 返回 {len(all_cookies)} 个 cookie")
-                for c in (all_cookies or []):
-                    cname = c.get("name", "") if isinstance(c, dict) else ""
-                    if cname == "_forum_session":
-                        cookie_val = c.get("value", "")
-                        break
-            except Exception as e:
-                logger.warning(f"[LinuxDoPreview] ctx.cookies() 异常: {type(e).__name__}: {e}")
-            if cookie_val:
-                logger.info(f"[LinuxDoPreview] 自动登录成功, cookie={len(cookie_val)} chars")
-                return cookie_val
-
-            logger.warning("[LinuxDoPreview] 登录成功但未找到 _forum_session cookie")
-            return None
-        except Exception as e:
-            logger.warning(f"[LinuxDoPreview] 自动登录异常: {type(e).__name__}: {str(e)[:150]}")
-            return None
-        finally:
-            if page:
-                try:
-                    page.close()
-                except Exception:
-                    pass
+        pairs: list[dict] = []
+        s = (cookie_str or "").strip()
+        if not s:
+            return pairs
+        if ";" in s:
+            # 完整 Cookie 头：按分号拆分
+            for part in s.split(";"):
+                part = part.strip()
+                if "=" not in part:
+                    continue
+                name, value = part.split("=", 1)
+                name = name.strip()
+                if self._COOKIE_NAME_RE.match(name):
+                    pairs.append({"name": name, "value": value.strip()})
+        elif "=" in s:
+            # 无分号但含 '='：仅当前缀是已知 cookie 名时才按 name=value 解析
+            name, value = s.split("=", 1)
+            name = name.strip()
+            if name in self._KNOWN_COOKIE_NAMES and self._COOKIE_NAME_RE.match(name):
+                pairs.append({"name": name, "value": value.strip()})
+        if not pairs:
+            # 裸值 → 当作 _forum_session（向后兼容）
+            pairs.append({"name": "_forum_session", "value": s})
+        return pairs
 
     def _inject_session_cookie(self, session, cookie_value: str = "") -> bool:
-        """将会话 cookie 注入到浏览器上下文中
+        """将会话 cookie 注入到当前浏览器上下文。
+
+        注意：StealthySession 每次请求都是新建的浏览器上下文，cookie 不会跨
+        请求保留，因此【每个会话都必须重新注入】。
 
         Returns: True 表示注入成功，False 表示失败
         """
@@ -531,75 +508,93 @@ class LinuxDoPreviewPlugin(Star):
         if not ctx:
             return False
 
-        try:
-            ctx.add_cookies([{
-                "name": "_forum_session",
-                "value": cookie_value,
+        pairs = self._parse_cookie_pairs(cookie_value)
+        if not pairs:
+            return False
+
+        cookies = []
+        for p in pairs:
+            # _t / _forum_session 是 HttpOnly；其余 cookie 按普通处理
+            http_only = p["name"] in ("_t", "_forum_session")
+            cookies.append({
+                "name": p["name"],
+                "value": p["value"],
                 "domain": "linux.do",
                 "path": "/",
-                "httpOnly": True,
+                "httpOnly": http_only,
                 "secure": True,
                 "sameSite": "Lax",
-            }])
-            logger.info("[LinuxDoPreview] 已注入会话 cookie")
+            })
+
+        try:
+            ctx.add_cookies(cookies)
+            logger.info(
+                f"[LinuxDoPreview] 已注入会话 cookie: {[c['name'] for c in cookies]}"
+            )
             return True
         except Exception as e:
             logger.warning(f"[LinuxDoPreview] Cookie 注入失败: {type(e).__name__}: {e}")
             return False
 
     def _check_login_state(self, session) -> bool:
-        """检查当前会话是否已登录"""
+        """检查当前会话是否已登录。
+
+        使用 /notifications.json：已登录返回 200，匿名返回 403。
+        （/session/current_user.json 对匿名用户也返回 404，无法区分，故弃用。）
+        """
         try:
             resp = session.fetch(
-                "https://linux.do/session/current_user.json", timeout=30000
+                "https://linux.do/notifications.json", timeout=30000
             )
-            if resp.status != 200:
-                return False
-            import json
-            data = json.loads(resp.body.decode("utf-8", errors="replace"))
-            return bool(data.get("current_user"))
+            return resp.status == 200
         except Exception:
             return False
 
     def _ensure_authenticated(self, session) -> bool:
-        """在已绕过 CF 的上下文中按需认证。后续所有 fetch 都会复用登录态。
+        """在已绕过 CF 的上下文中按需认证。
+
+        重要：StealthySession 每次请求都会新建，浏览器上下文不跨请求保留，因此
+        配置的 Cookie 必须【每次都注入】当前会话；而【是否登录】的校验结果可以
+        缓存（Cookie 有效性不会在请求间变化）。
 
         逻辑：
-        1) 已检查过 → 返回缓存结果
-        2) 配置了 linuxdo_session_cookie → 直接注入
-        3) 配置了 linuxdo_username + linuxdo_password → 自动登录抓取 cookie
-        4) 都没配置 → 匿名访问
+        1) 配置了 linuxdo_session_cookie → 每次注入；首次校验后缓存结果
+        2) 仅配置了用户名/密码 → linux.do 登录受 hCaptcha 保护，无法自动登录，
+           仅提示一次并降级为匿名访问
+        3) 都没配置 → 匿名访问
         """
-        if self._auth_check_done:
-            return self._logged_in
-
-        # 优先使用手动配置的 cookie
+        # ── 手动 Cookie：每次请求都注入（上下文是新建的） ──
         if self._has_session_cookie():
             cookie_value = (self.config.get("linuxdo_session_cookie", "") or "").strip()
-            if self._inject_session_cookie(session, cookie_value) and self._check_login_state(session):
+            if not self._inject_session_cookie(session, cookie_value):
                 self._auth_check_done = True
-                self._logged_in = True
-                logger.info("[LinuxDoPreview] Cookie 登录验证成功")
-                return True
-            else:
-                logger.warning("[LinuxDoPreview] Cookie 无效或已过期")
-                self._auth_check_done = True
+                self._logged_in = False
                 return False
+            # 校验结果只算一次（Cookie 有效性跨请求稳定）
+            if not self._auth_check_done:
+                self._logged_in = self._check_login_state(session)
+                self._auth_check_done = True
+                if self._logged_in:
+                    logger.info("[LinuxDoPreview] Cookie 登录验证成功")
+                else:
+                    logger.warning(
+                        "[LinuxDoPreview] 会话 Cookie 无效或已过期，将匿名访问。"
+                        "请在浏览器重新获取 Cookie（推荐 _t，长效）后填入配置。"
+                    )
+            return self._logged_in
 
-        # 其次尝试自动登录抓取 cookie
-        if self._has_auto_login():
-            cookie_value = self._auto_login_and_capture(session)
-            if cookie_value:
-                if self._inject_session_cookie(session, cookie_value):
-                    self._auth_check_done = True
-                    self._logged_in = True
-                    logger.info("[LinuxDoPreview] 自动登录完成，cookie 有效")
-                    return True
-            logger.warning("[LinuxDoPreview] 自动登录失败，降级为匿名访问")
+        # ── 仅用户名/密码：受 hCaptcha 限制，无法自动登录（仅提示一次） ──
+        if self._has_auto_login() and not self._auth_check_done:
             self._auth_check_done = True
-            return False
+            logger.warning(
+                "[LinuxDoPreview] linux.do 登录启用了 hCaptcha 人机验证，账号密码"
+                "自动登录不可用。请在浏览器登录 linux.do 后，F12 → Application → "
+                "Cookies → 复制 _t（推荐，长效）或 _forum_session 的值，填入 "
+                "linuxdo_session_cookie 配置项。本次降级为匿名访问。"
+            )
 
-        # 都没配置 → 匿名
+        # 都没配置 / 自动登录不可用 → 匿名
+        self._logged_in = False
         return False
 
     def _fetch_topic_data(self, session, url: str) -> dict | None:

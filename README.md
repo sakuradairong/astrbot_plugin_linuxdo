@@ -9,7 +9,7 @@
 - 🛡️ **绕过 Cloudflare** — 使用 [Scrapling](https://github.com/D4Vinci/Scrapling) 的 StealthySession 自动解 Turnstile
 - 📸 **智能截图** — 自适应卡片渲染，完整楼主内容，无空白/截断
 - 📝 **内容摘要** — 通过 Discourse JSON API 提取完整楼主内容（无截断）
-- 🔒 **账户登录** — 可选配置账号密码，访问受限分类、私信等非公开内容
+- 🔒 **会话 Cookie** — 可选配置浏览器 Cookie，访问受限分类、私信等非公开内容（账号密码自动登录因 hCaptcha 已移除）
 - ⚡ **异步非阻塞** — Scrapling 在独立线程池运行，不阻塞 AstrBot 主循环
 - 💾 **缓存机制** — 30 分钟内相同链接直接返回缓存截图
 - 🧹 **缓存管理** — `/linuxdo_stats` 查看统计，`/linuxdo_clean` 清理缓存
@@ -101,28 +101,28 @@ https://linux.do/t/topic/1378383
 | `screenshot_timeout` | 截图超时（秒） | 15 |
 | `screenshot_full_page` | 全页截图模式（true=完整帖子，false=仅视口） | true |
 | `use_api_render` | 使用 API + 自定义 HTML 渲染（推荐） | true |
-| `linuxdo_session_cookie` | LinuxDo 会话 Cookie，用于访问受限内容 | （空） |
-| `linuxdo_username` | LinuxDo 用户名，自动登录获取 Cookie | （空） |
-| `linuxdo_password` | LinuxDo 密码，配合用户名自动登录 | （空） |
+| `linuxdo_session_cookie` | LinuxDo 会话 Cookie（推荐填 `_t`，访问受限内容必填） | （空） |
+| `linuxdo_username` | LinuxDo 用户名（已弃用，受 hCaptcha 限制无法自动登录） | （空） |
+| `linuxdo_password` | LinuxDo 密码（已弃用，配合用户名自动登录） | （空） |
 
 ## 🔑 访问受限内容（可选）
 
-默认以匿名身份访问 linux.do。如需查看受限分类、私信等非公开内容，有两种方式：
+默认以匿名身份访问 linux.do。如需查看受限分类、私信等非公开内容，请使用手动 Cookie。
 
-### 方式一：自动登录（推荐）
-
-1. 在 AstrBot WebUI 插件配置中填写 `linuxdo_username` 和 `linuxdo_password`
-2. 插件自动通过 Playwright 登录并获取会话 Cookie
-3. 登录失败时自动降级为匿名访问
-
-### 方式二：手动复制 Cookie
+### 方式一：手动复制 Cookie（推荐，唯一可用方式）
 
 1. 在浏览器中登录 linux.do
-2. 打开 DevTools（F12）→ Application → Cookies → linux.do
-3. 复制 `_forum_session` cookie 的 Value
+2. 打开 DevTools（F12）→ Application → Cookies → `https://linux.do`
+3. 复制 **`_t`**（推荐，长效约 1 年）或 `_forum_session`（短期）的 Value
 4. 在 AstrBot WebUI 插件配置中粘贴到 `linuxdo_session_cookie`
 
-**注意**：Cookie 有效期约 2 周，过期后需重新获取。自动登录模式下插件会自动刷新。
+也支持一次粘贴完整 Cookie 头，例如：`_t=xxx; _forum_session=yyy`。
+
+**有效期**：`_t` 约 1 年；`_forum_session` 约 2 周。过期后重新获取即可，无需重启。
+
+### 关于账号密码自动登录（已不可用）
+
+> ⚠️ linux.do 的登录表单启用了 **hCaptcha 人机验证**，自动化浏览器无法通过，因此账号密码自动登录已被移除。`linuxdo_username` / `linuxdo_password` 配置项保留仅为兼容，不再生效。请改用上方的 Cookie 方式。
 
 ## ⚠️ 注意事项
 
