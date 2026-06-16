@@ -469,46 +469,19 @@ class LinuxDoPreviewPlugin(Star):
                 pass
             page.wait_for_timeout(1000)
 
-            # 用表单 POST 到 /login（Discourse 标准登录端点）
-            # /session.json 被限制返回 403，但 /login 正常工作
-            result = page.evaluate("""async (creds) => {
-                try {
-                    const body = new URLSearchParams({
-                        username: creds.login,
-                        password: creds.password,
-                        redirect: '/',
-                    }).toString();
-                    const resp = await fetch('/login', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/x-www-form-urlencoded',
-                        },
-                        body: body,
-                        credentials: 'include',
-                    });
-                    return { ok: resp.ok, status: resp.status, url: resp.url };
-                } catch(e) {
-                    return { ok: false, status: 0, error: e.message };
-                }
-            }""", {"login": username, "password": password})
-
-            logger.info(f"[LinuxDoPreview] fetch result type={type(result).__name__}, val={str(result)[:200]}")
-            if not result:
-                logger.warning("[LinuxDoPreview] fetch /session.json 无响应")
+            # 用 Playwright 表单提交登录（Discourse SPA 表单用 id 选择器）
+            try:
+                page.wait_for_selector('#login-account-name', timeout=10000)
+            except Exception:
+                logger.warning("[LinuxDoPreview] 登录表单未出现")
                 return None
 
-            if not isinstance(result, dict):
-                logger.warning(f"[LinuxDoPreview] fetch 返回非 dict: {type(result).__name__}")
-                return None
+            page.fill('#login-account-name', username)
+            page.fill('#login-account-password', password)
+            page.click('#login-button')
+            page.wait_for_timeout(5000)  # 等待登录完成
 
-            if not result.get("ok"):
-                err = result.get("error") or result.get("data") or f"http_{result.get('status')}"
-                logger.warning(f"[LinuxDoPreview] 登录失败: {err}")
-                return None
-
-            # /login POST 返回 200 表示登录成功（返回 HTML 页面，不是 JSON）
-            # 登录成功后浏览器自动设置 _forum_session cookie（HttpOnly，JS 不可见）
-            # 用 ctx.cookies() 获取（带 URL 参数）
+            # 从 ctx.cookies() 获取 HttpOnly _forum_session cookie
             cookie_val = None
             try:
                 all_cookies = session.context.cookies()
