@@ -511,12 +511,15 @@ class LinuxDoPreviewPlugin(Star):
             # 用 ctx.cookies() 获取（带 URL 参数）
             cookie_val = None
             try:
-                for c in (session.context.cookies() or []):
-                    if isinstance(c, dict) and c.get("name") == "_forum_session":
+                all_cookies = session.context.cookies()
+                logger.info(f"[LinuxDoPreview] ctx.cookies() 返回 {len(all_cookies)} 个 cookie")
+                for c in (all_cookies or []):
+                    cname = c.get("name", "") if isinstance(c, dict) else ""
+                    if cname == "_forum_session":
                         cookie_val = c.get("value", "")
                         break
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[LinuxDoPreview] ctx.cookies() 异常: {type(e).__name__}: {e}")
             if cookie_val:
                 logger.info(f"[LinuxDoPreview] 自动登录成功, cookie={len(cookie_val)} chars")
                 return cookie_val
