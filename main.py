@@ -461,49 +461,60 @@ class LinuxDoPreviewPlugin(Star):
         page = None
         try:
             page = ctx.new_page()
-            page.goto("https://linux.do/login", wait_until="load", timeout=30000)
+            # 先访问任意页面以建立 CF clearance + _forum_session cookie
+            page.goto("https://linux.do/", wait_until="domcontentloaded", timeout=30000)
             try:
                 page.wait_for_load_state("networkidle", timeout=10000)
             except Exception:
                 pass
-            page.wait_for_timeout(1500)
+            page.wait_for_timeout(1000)
 
-            # 等待表单出现
-            try:
-                page.wait_for_selector('input[name="username"][type="text"]', timeout=15000)
-            except Exception:
-                logger.warning("[LinuxDoPreview] 登录页未出现表单")
+            # 直接用 fetch POST /session.json（表单编码，不设 XHR 头）
+            # Discourse 对非 XHR 请求用 _forum_session cookie 验证 CSRF
+            result = page.evaluate("""async (creds) => {
+                const body = new URLSearchParams({
+                    login: creds.login,
+                    password: creds.password,
+                    remember_me: 'true',
+                }).toString();
+                const resp = await fetch('/session.json', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: body,
+                    credentials: 'include',
+                });
+                let data = null;
+                try { data = await resp.json(); } catch(e) {}
+                return { ok: resp.ok, status: resp.status, data: data };
+            }""", {"login": username, "password": password})
+
+            if not result:
+                logger.warning("[LinuxDoPreview] fetch /session.json 无响应")
                 return None
 
-            page.fill('input[name="username"][type="text"]', username)
-            page.fill('input[type="password"]', password)
-            page.click('input[type="submit"][name="submit"], button[type="submit"]')
-
-            # 等待跳转
-            try:
-                page.wait_for_url(
-                    lambda u: "/login" not in u and "/session" not in u,
-                    timeout=20000,
-                )
-            except Exception:
-                err_el = page.query_selector(".alert-error, .login-error, .flash.error")
-                if err_el:
-                    txt = (err_el.text_content() or "").strip()
-                    logger.warning(f"[LinuxDoPreview] 登录失败: {txt[:150]}")
-                else:
-                    logger.warning("[LinuxDoPreview] 登录超时")
+            if not result.get("ok"):
+                data = result.get("data") or {}
+                err = data.get("error") or data.get("reason") or f"http_{result.get('status')}"
+                logger.warning(f"[LinuxDoPreview] 登录失败: {err}")
                 return None
 
-            # 从浏览器上下文抓取 _forum_session cookie
-            cookies = ctx.cookies("https://linux.do")
-            for c in cookies:
-                if c.get("name") == "_forum_session":
-                    val = c.get("value", "")
-                    if val:
-                        logger.info(f"[LinuxDoPreview] 自动登录成功，已获取 cookie ({len(val)} chars)")
-                        return val
+            # 登录成功，从浏览器上下文抓取更新后的 _forum_session cookie
+            data = result.get("data") or {}
+            current_user = data.get("current_user") or {}
+            if current_user.get("username"):
+                cookies = ctx.cookies("https://linux.do")
+                for c in cookies:
+                    if c.get("name") == "_forum_session":
+                        val = c.get("value", "")
+                        if val:
+                            logger.info(f"[LinuxDoPreview] 自动登录成功: {current_user.get('username')}, cookie={len(val)} chars")
+                            return val
+                logger.warning("[LinuxDoPreview] 登录成功但未找到 _forum_session cookie")
+                return None
 
-            logger.warning("[LinuxDoPreview] 登录成功但未找到 _forum_session cookie")
+            logger.warning(f"[LinuxDoPreview] 登录响应异常: {result}")
             return None
         except Exception as e:
             logger.warning(f"[LinuxDoPreview] 自动登录异常: {type(e).__name__}: {str(e)[:150]}")
