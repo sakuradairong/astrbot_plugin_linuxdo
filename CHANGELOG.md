@@ -3,6 +3,17 @@
 本项目所有显著变更都记录在此文件中。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.2.0] - 2026-06-16
+
+### 新增
+- **LinuxDo 账户登录支持**：可配置 `linuxdo_username` / `linuxdo_password`，插件自动通过 Playwright 提交 Discourse 登录表单（`/login` POST），登录态 cookie 在同一 StealthySession 内共享，可访问受限分类、私信预览等非公开内容。留空则保持匿名访问，行为与以前完全一致
+- 登录流程：`_ensure_authenticated()` 按需触发，跨 fetch 缓存登录状态（`_auth_check_done`），避免重复登录
+- 登录失败（凭据错误、2FA、风控）时**优雅降级到匿名**，不阻断渲染、不抛异常
+
+### 配置
+- 新增 `linuxdo_username`（string，可选）：配置后插件自动登录
+- 新增 `linuxdo_password`（string，可选，敏感）：密码以明文存储，建议使用专用低权限账户
+
 ## [1.1.3] - 2026-06-16
 
 ### 修复
@@ -74,6 +85,7 @@
 - 截图时只截取首楼（隐藏所有回复帖）
 - 通过展开 Discourse 截断的内容 + 滚动触发懒加载，确保完整捕获楼主贴
 
+[1.2.0]: https://github.com/sakuradairong/astrbot_plugin_linuxdo/compare/7f3831f...HEAD
 [1.1.3]: https://github.com/sakuradairong/astrbot_plugin_linuxdo/compare/0496d68...6aae30e
 [1.1.2]: https://github.com/sakuradairong/astrbot_plugin_linuxdo/compare/7dda0e5...0496d68
 [1.1.1]: https://github.com/sakuradairong/astrbot_plugin_linuxdo/compare/f17dd28...26336b7

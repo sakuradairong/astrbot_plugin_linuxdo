@@ -28,5 +28,17 @@
     "type": "bool",
     "default": true,
     "hint": "启用后用 Discourse JSON API 拉数据+自定义 HTML 模板渲染（推荐，完整、干净、不受页面截断/懒加载影响）；关闭则走传统页面截图方案。"
+  },
+  "linuxdo_username": {
+    "description": "LinuxDo 用户名（可选）",
+    "type": "string",
+    "default": "",
+    "hint": "配置后插件将自动登录，可访问受限分类、私信预览等非公开内容。留空则保持匿名访问。"
+  },
+  "linuxdo_password": {
+    "description": "LinuxDo 密码（可选，敏感）",
+    "type": "string",
+    "default": "",
+    "hint": "⚠️ 密码以明文存储于配置文件，请确保文件权限（600）或使用专用低权限账户。重启后凭据需重新输入。"
   }
 }

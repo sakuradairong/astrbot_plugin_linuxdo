@@ -55,6 +55,10 @@ class LinuxDoPreviewPlugin(Star):
         self._stats = {"total": 0, "cache_hit": 0, "error": 0}
         self._stats_lock = threading.Lock()
 
+        # 登录状态：跨 fetch 复用在同一 StealthySession 中
+        self._auth_check_done = False
+        self._logged_in = False
+
     async def terminate(self):
         _EXECUTOR.shutdown(wait=False)
         logger.info("[LinuxDoPreview] 插件已卸载")
@@ -138,6 +142,8 @@ class LinuxDoPreviewPlugin(Star):
         with _StealthySession(  # type: ignore[union-attr]
             headless=True, solve_cloudflare=True
         ) as session:
+            # ── 可选：按需登录以访问受限内容 ──
+            self._ensure_authenticated(session)
             if use_api_render:
                 # ── 方案 A：API + 自定义 HTML 渲染（推荐）──
                 topic_data = self._fetch_topic_data(session, url)
@@ -423,10 +429,123 @@ class LinuxDoPreviewPlugin(Star):
             text = re.sub(r"<[^>]+>", " ", cooked_html)
             text = re.sub(r"\s+", " ", text).strip()
             return html_mod.unescape(text)
-            
+
         except Exception as e:
             logger.info(f"[LinuxDoPreview] JSON API 提取失败: {type(e).__name__}: {e}")
             return ""
+
+    # ─────────── 登录支持 ───────────
+
+    def _has_credentials(self) -> bool:
+        username = self.config.get("linuxdo_username", "") or ""
+        password = self.config.get("linuxdo_password", "") or ""
+        return bool(username and password)
+
+    def _check_login_state(self, session) -> bool:
+        """检查当前会话是否已登录"""
+        try:
+            resp = session.fetch(
+                "https://linux.do/session/current_user.json", timeout=10
+            )
+            if resp.status != 200:
+                return False
+            import json
+            data = json.loads(resp.body.decode("utf-8", errors="replace"))
+            return bool(data.get("current_user"))
+        except Exception:
+            return False
+
+    def _do_login(self, session) -> bool:
+        """通过 Playwright 提交 Discourse 登录表单
+
+        Discourse HTML form POST 跳转不走 CSRF 检查，
+        服务端使用 _forum_session cookie 鉴权。成功后 cookie 在
+        同一 StealthySession 的 context 中共享。
+
+        Returns: True 表示登录成功，False 表示失败
+        """
+        username = self.config.get("linuxdo_username", "") or ""
+        password = self.config.get("linuxdo_password", "") or ""
+        ctx = session.context
+        if not ctx or not username or not password:
+            return False
+
+        page = None
+        try:
+            page = ctx.new_page()
+            # 访问 /login 页面（此时 CF 已解，先前 fetch 已设 cf_clearance）
+            # 用 wait_until="load" + networkidle + 额外等待，让 SPA 实际渲染表单
+            page.goto("https://linux.do/login", wait_until="load", timeout=30000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=10000)
+            except Exception:
+                pass
+            page.wait_for_timeout(1500)  # 预留 SPA 渲染时间
+            # Discourse /login 页面有多个表单，选包含 username + password 的
+            # 通常是第二个表单 (post 'username','password','redirect','submit')
+            try:
+                page.wait_for_selector('input[name="username"][type="text"]', timeout=15000)
+            except Exception:
+                logger.warning("[LinuxDoPreview] 登录页未出现 username 输入框")
+                return False
+            page.fill('input[name="username"][type="text"]', username)
+            page.fill('input[type="password"]', password)
+            # 提交：使用按钮 click；不设 XHR 头以走表单 POST 路径
+            page.click('input[type="submit"][name="submit"], button[type="submit"]')
+            # 等待跳转：登录成功会从 /login 跳到首页或其他页面
+            try:
+                page.wait_for_url(
+                    lambda u: "/login" not in u and "/session" not in u,
+                    timeout=20000,
+                )
+            except Exception:
+                # 登录失败：停留在 /login，检查错误
+                err_el = page.query_selector(".alert-error, .login-error, .flash.error")
+                if err_el:
+                    txt = (err_el.text_content() or "").strip()
+                    logger.warning(f"[LinuxDoPreview] 登录失败: {txt[:150]}")
+                else:
+                    logger.warning("[LinuxDoPreview] 登录超时或停留在登录页")
+                return False
+            # 额外验证：拉取 /session/current_user.json 确认登录态
+            if self._check_login_state(session):
+                logger.info(f"[LinuxDoPreview] 登录成功: {username}")
+                return True
+            logger.warning("[LinuxDoPreview] 表单已提交但未检测到登录态")
+            return False
+        except Exception as e:
+            logger.warning(f"[LinuxDoPreview] 登录异常: {type(e).__name__}: {str(e)[:150]}")
+            return False
+        finally:
+            if page:
+                try:
+                    page.close()
+                except Exception:
+                    pass
+
+    def _ensure_authenticated(self, session) -> bool:
+        """在已绕过 CF 的上下文中按需登录。后续所有 fetch 都会复用登录态。
+
+        逻辑：
+        1) 未配置凭据 → 匿名访问
+        2) 本会话已检查过且登录成功 → 跳过
+        3) 调用 /session/current_user.json 检测当前是否已登录（失败不熔断）
+        4) 未登录则提交登录表单
+        """
+        if not self._has_credentials():
+            return False
+        if self._auth_check_done:
+            return self._logged_in
+        # 先检测是否已登录（避免重复登录）。检测失败一律当作未登录，走登录流程。
+        if self._check_login_state(session):
+            self._auth_check_done = True
+            self._logged_in = True
+            logger.info("[LinuxDoPreview] 会话已登录，跳过")
+            return True
+        # 未登录则走登录流程
+        self._logged_in = self._do_login(session)
+        self._auth_check_done = True
+        return self._logged_in
 
     def _fetch_topic_data(self, session, url: str) -> dict | None:
         """通过 Discourse JSON API 获取完整的主题数据
