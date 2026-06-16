@@ -504,13 +504,24 @@ class LinuxDoPreviewPlugin(Star):
             data = result.get("data") or {}
             current_user = data.get("current_user") or {}
             if current_user.get("username"):
-                cookies = ctx.cookies("https://linux.do")
-                for c in cookies:
-                    if c.get("name") == "_forum_session":
-                        val = c.get("value", "")
-                        if val:
-                            logger.info(f"[LinuxDoPreview] 自动登录成功: {current_user.get('username')}, cookie={len(val)} chars")
-                            return val
+                # 用 page.evaluate 获取 cookie（ctx.cookies() 在 patchright 中可能返回空）
+                cookie_val = page.evaluate("""() => {
+                    const m = document.cookie.match(/(?:^|;\\s*)_forum_session=([^;]*)/);
+                    return m ? decodeURIComponent(m[1]) : null;
+                }""")
+                if cookie_val:
+                    logger.info(f"[LinuxDoPreview] 自动登录成功: {current_user.get('username')}, cookie={len(cookie_val)} chars")
+                    return cookie_val
+                # 回退：尝试 ctx.cookies()
+                try:
+                    for c in (ctx.cookies() or []):
+                        if isinstance(c, dict) and c.get("name") == "_forum_session":
+                            val = c.get("value", "")
+                            if val:
+                                logger.info(f"[LinuxDoPreview] 自动登录成功: {current_user.get('username')}, cookie={len(val)} chars (ctx)")
+                                return val
+                except Exception:
+                    pass
                 logger.warning("[LinuxDoPreview] 登录成功但未找到 _forum_session cookie")
                 return None
 
