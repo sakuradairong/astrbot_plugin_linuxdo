@@ -102,18 +102,27 @@ https://linux.do/t/topic/1378383
 | `screenshot_full_page` | 全页截图模式（true=完整帖子，false=仅视口） | true |
 | `use_api_render` | 使用 API + 自定义 HTML 渲染（推荐） | true |
 | `linuxdo_session_cookie` | LinuxDo 会话 Cookie，用于访问受限内容 | （空） |
+| `linuxdo_username` | LinuxDo 用户名，自动登录获取 Cookie | （空） |
+| `linuxdo_password` | LinuxDo 密码，配合用户名自动登录 | （空） |
 
 ## 🔑 访问受限内容（可选）
 
-默认以匿名身份访问 linux.do。如需查看受限分类、私信等非公开内容：
+默认以匿名身份访问 linux.do。如需查看受限分类、私信等非公开内容，有两种方式：
+
+### 方式一：自动登录（推荐）
+
+1. 在 AstrBot WebUI 插件配置中填写 `linuxdo_username` 和 `linuxdo_password`
+2. 插件自动通过 Playwright 登录并获取会话 Cookie
+3. 登录失败时自动降级为匿名访问
+
+### 方式二：手动复制 Cookie
 
 1. 在浏览器中登录 linux.do
 2. 打开 DevTools（F12）→ Application → Cookies → linux.do
 3. 复制 `_forum_session` cookie 的 Value
 4. 在 AstrBot WebUI 插件配置中粘贴到 `linuxdo_session_cookie`
-5. 插件自动注入 cookie 访问受限内容
 
-**注意**：Cookie 有效期约 2 周，过期后需重新获取。
+**注意**：Cookie 有效期约 2 周，过期后需重新获取。自动登录模式下插件会自动刷新。
 
 ## ⚠️ 注意事项
 

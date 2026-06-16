@@ -7,15 +7,18 @@
 
 ### 新增
 - **会话 Cookie 注入访问受限内容**：配置 `linuxdo_session_cookie` 后，插件自动将 cookie 注入 StealthySession 的浏览器上下文，可访问受限分类、私信等非公开内容。留空则保持匿名访问
-- 获取方式：浏览器登录 linux.do → F12 → Application → Cookies → linux.do → `_forum_session` → 复制 Value
+- **自动登录获取 Cookie**：配置 `linuxdo_username` + `linuxdo_password` 后，插件通过 Playwright 自动登录并抓取 `_forum_session` cookie，无需手动复制
+- 获取方式（手动）：浏览器登录 linux.do → F12 → Application → Cookies → linux.do → `_forum_session` → 复制 Value
 - Cookie 注入后自动验证登录态，无效/过期时降级为匿名访问
 
 ### 变更
-- 替换原有的 Playwright 表单登录方案（依赖 SPA 渲染、CSRF 处理，不够稳定）为 Cookie 注入方案（零浏览器依赖、直接注入、最快最稳）
+- 替换原有的 Playwright 表单登录方案（依赖 SPA 渲染、CSRF 处理，不够稳定）为双模式认证：手动 Cookie 注入 + 自动登录抓取
 
 ### 配置
-- 新增 `linuxdo_session_cookie`（string，可选）：会话 cookie 值
-- 移除 `linuxdo_username`、`linuxdo_password`（不再需要，linux.do 不提供用户级 API key）
+- 新增 `linuxdo_session_cookie`（string，可选）：手动 Cookie 值
+- 新增 `linuxdo_username`（string，可选）：自动登录用户名
+- 新增 `linuxdo_password`（string，可选）：自动登录密码
+- 优先级：手动 Cookie > 自动登录 > 匿名访问
 
 ## [1.1.3] - 2026-06-16
 

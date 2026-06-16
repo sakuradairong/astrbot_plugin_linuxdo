@@ -441,12 +441,87 @@ class LinuxDoPreviewPlugin(Star):
         cookie = self.config.get("linuxdo_session_cookie", "") or ""
         return bool(cookie.strip())
 
-    def _inject_session_cookie(self, session) -> bool:
+    def _has_auto_login(self) -> bool:
+        """检查是否配置了自动登录凭据"""
+        u = self.config.get("linuxdo_username", "") or ""
+        p = self.config.get("linuxdo_password", "") or ""
+        return bool(u.strip() and p.strip())
+
+    def _auto_login_and_capture(self, session) -> str | None:
+        """用 Playwright 自动登录 linux.do 并抓取 _forum_session cookie
+
+        Returns: cookie value 或 None
+        """
+        username = (self.config.get("linuxdo_username", "") or "").strip()
+        password = (self.config.get("linuxdo_password", "") or "").strip()
+        ctx = session.context
+        if not ctx or not username or not password:
+            return None
+
+        page = None
+        try:
+            page = ctx.new_page()
+            page.goto("https://linux.do/login", wait_until="load", timeout=30000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=10000)
+            except Exception:
+                pass
+            page.wait_for_timeout(1500)
+
+            # 等待表单出现
+            try:
+                page.wait_for_selector('input[name="username"][type="text"]', timeout=15000)
+            except Exception:
+                logger.warning("[LinuxDoPreview] 登录页未出现表单")
+                return None
+
+            page.fill('input[name="username"][type="text"]', username)
+            page.fill('input[type="password"]', password)
+            page.click('input[type="submit"][name="submit"], button[type="submit"]')
+
+            # 等待跳转
+            try:
+                page.wait_for_url(
+                    lambda u: "/login" not in u and "/session" not in u,
+                    timeout=20000,
+                )
+            except Exception:
+                err_el = page.query_selector(".alert-error, .login-error, .flash.error")
+                if err_el:
+                    txt = (err_el.text_content() or "").strip()
+                    logger.warning(f"[LinuxDoPreview] 登录失败: {txt[:150]}")
+                else:
+                    logger.warning("[LinuxDoPreview] 登录超时")
+                return None
+
+            # 从浏览器上下文抓取 _forum_session cookie
+            cookies = ctx.cookies("https://linux.do")
+            for c in cookies:
+                if c.get("name") == "_forum_session":
+                    val = c.get("value", "")
+                    if val:
+                        logger.info(f"[LinuxDoPreview] 自动登录成功，已获取 cookie ({len(val)} chars)")
+                        return val
+
+            logger.warning("[LinuxDoPreview] 登录成功但未找到 _forum_session cookie")
+            return None
+        except Exception as e:
+            logger.warning(f"[LinuxDoPreview] 自动登录异常: {type(e).__name__}: {str(e)[:150]}")
+            return None
+        finally:
+            if page:
+                try:
+                    page.close()
+                except Exception:
+                    pass
+
+    def _inject_session_cookie(self, session, cookie_value: str = "") -> bool:
         """将会话 cookie 注入到浏览器上下文中
 
-        Returns: True 表示注入成功且验证通过，False 表示失败
+        Returns: True 表示注入成功，False 表示失败
         """
-        cookie_value = (self.config.get("linuxdo_session_cookie", "") or "").strip()
+        if not cookie_value:
+            cookie_value = (self.config.get("linuxdo_session_cookie", "") or "").strip()
         if not cookie_value:
             return False
 
@@ -455,7 +530,6 @@ class LinuxDoPreviewPlugin(Star):
             return False
 
         try:
-            # 注入 _forum_session cookie
             ctx.add_cookies([{
                 "name": "_forum_session",
                 "value": cookie_value,
@@ -486,32 +560,44 @@ class LinuxDoPreviewPlugin(Star):
             return False
 
     def _ensure_authenticated(self, session) -> bool:
-        """在已绕过 CF 的上下文中按需注入 cookie。后续所有 fetch 都会复用登录态。
+        """在已绕过 CF 的上下文中按需认证。后续所有 fetch 都会复用登录态。
 
         逻辑：
-        1) 未配置 cookie → 匿名访问
-        2) 本会话已检查过且登录成功 → 跳过
-        3) 注入 cookie 到浏览器上下文
-        4) 调用 /session/current_user.json 验证登录态
+        1) 已检查过 → 返回缓存结果
+        2) 配置了 linuxdo_session_cookie → 直接注入
+        3) 配置了 linuxdo_username + linuxdo_password → 自动登录抓取 cookie
+        4) 都没配置 → 匿名访问
         """
-        if not self._has_session_cookie():
-            return False
         if self._auth_check_done:
             return self._logged_in
 
-        # 注入 cookie
-        if not self._inject_session_cookie(session):
+        # 优先使用手动配置的 cookie
+        if self._has_session_cookie():
+            cookie_value = (self.config.get("linuxdo_session_cookie", "") or "").strip()
+            if self._inject_session_cookie(session, cookie_value) and self._check_login_state(session):
+                self._auth_check_done = True
+                self._logged_in = True
+                logger.info("[LinuxDoPreview] Cookie 登录验证成功")
+                return True
+            else:
+                logger.warning("[LinuxDoPreview] Cookie 无效或已过期")
+                self._auth_check_done = True
+                return False
+
+        # 其次尝试自动登录抓取 cookie
+        if self._has_auto_login():
+            cookie_value = self._auto_login_and_capture(session)
+            if cookie_value:
+                if self._inject_session_cookie(session, cookie_value) and self._check_login_state(session):
+                    self._auth_check_done = True
+                    self._logged_in = True
+                    return True
+            logger.warning("[LinuxDoPreview] 自动登录失败，降级为匿名访问")
             self._auth_check_done = True
             return False
 
-        # 验证登录态
-        if self._check_login_state(session):
-            self._auth_check_done = True
-            self._logged_in = True
-            logger.info("[LinuxDoPreview] Cookie 登录验证成功")
-            return True
-
-        logger.warning("[LinuxDoPreview] Cookie 无效或已过期，请重新获取")
+        # 都没配置 → 匿名
+        return False
         self._auth_check_done = True
         self._logged_in = False
         return False
