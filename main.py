@@ -948,12 +948,13 @@ class LinuxDoPreviewPlugin(Star):
 
             page.wait_for_timeout(300)
 
-            # ── 自适应截图：优先对 .card 元素截图，避免全页导致的巨大空白 ──
-            # 元素截图按内容的实际边界拍，零空白；否则回退到全页模式。
+            # ── 自适应截图：总是优先对 .card 元素截图，按内容实际边界拍 ──
+            # 元素截图零空白、零截断，不受 viewport 高度限制。
+            # `screenshot_full_page` 仅作为后备回退：元素截图失败时才使用。
             card_locator = page.locator(".card")
             full_page = self.config.get("screenshot_full_page", True)
             try:
-                if full_page and card_locator.count() > 0:
+                if card_locator.count() > 0:
                     card_locator.first.screenshot(
                         path=str(save_path),
                         timeout=timeout_ms,
