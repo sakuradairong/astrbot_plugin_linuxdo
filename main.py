@@ -590,10 +590,20 @@ class LinuxDoPreviewPlugin(Star):
         first = posts[0]
         author_name = html_mod.escape(first.get("name", "") or first.get("username", "") or "")
         author_username = html_mod.escape(first.get("username", "") or "")
-        author_avatar = first.get("avatar_template", "") or ""
-        if author_avatar and author_avatar.startswith("/"):
-            author_avatar = "https://linux.do" + author_avatar
-        author_avatar = author_avatar.replace("{size}", "120")
+        author_initial = (author_name or author_username or "?").strip()[:1].upper()
+        author_avatar_raw = first.get("avatar_template", "") or ""
+        # 绝对化 + 替换 {size}。Discourse 模板形如：
+        #   //host/.../avatar.png{size}    → 需保留 {size} 占位
+        #   //host/.../avatar.png          → 无占位，原样
+        # 任何模板中包含 {size} 都要换为像素数值；否则不强制改动
+        if author_avatar_raw and author_avatar_raw.startswith("//"):
+            author_avatar = "https:" + author_avatar_raw
+        elif author_avatar_raw and author_avatar_raw.startswith("/"):
+            author_avatar = "https://linux.do" + author_avatar_raw
+        else:
+            author_avatar = author_avatar_raw
+        if "{size}" in author_avatar:
+            author_avatar = author_avatar.replace("{size}", "120")
         post_created = first.get("created_at", "") or ""
         post_like = first.get("like_count", 0)
         cooked_html = first.get("cooked", "") or ""
@@ -618,6 +628,17 @@ class LinuxDoPreviewPlugin(Star):
         views_text = self._format_count(views)
         posts_text = self._format_count(posts_count)
         likes_text = self._format_count(like_count)
+
+        # 头像 img 标签（未提供 URL 时仅渲染 fallback 块）
+        if author_avatar:
+            avatar_img_html = (
+                '<img class="avatar" src="'
+                + html_mod.escape(author_avatar)
+                + '" alt="avatar" onerror="this.style.display='
+                + chr(39) + 'none' + chr(39) + '">'
+            )
+        else:
+            avatar_img_html = ''
 
         # 完整预览 HTML（含内联 CSS）
         return f"""<!DOCTYPE html>
@@ -666,6 +687,24 @@ class LinuxDoPreviewPlugin(Star):
   .meta img.avatar {{
     width: 28px; height: 28px; border-radius: 50%;
     object-fit: cover; background: #ddd;
+  }}
+  .meta .avatar-wrap {{
+    position: relative;
+    width: 28px; height: 28px;
+    display: inline-block;
+  }}
+  .meta .avatar-wrap img {{
+    position: absolute; inset: 0;
+  }}
+  .meta .avatar-fallback {{
+    position: absolute; inset: 0;
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #1769c4, #5a3ec8);
+    color: #fff; font-weight: 600;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px;
+    text-transform: uppercase;
   }}
   .meta .name {{ color: #1c1c1c; font-weight: 500; }}
   .stats {{
@@ -736,7 +775,10 @@ class LinuxDoPreviewPlugin(Star):
     <div class="header">
       <h1 class="title">{fancy_title}</h1>
       <div class="meta">
-        <img class="avatar" src="{html_mod.escape(author_avatar)}" alt="avatar">
+        <div class="avatar-wrap">
+          {avatar_img_html}
+          <div class="avatar-fallback">{html_mod.escape(author_initial)}</div>
+        </div>
         <span class="name">{author_name}</span>
         <span>·</span>
         <span>{html_mod.escape(created_text)}</span>
@@ -772,31 +814,92 @@ class LinuxDoPreviewPlugin(Star):
 
     @staticmethod
     def _normalize_cooked_urls(cooked_html: str) -> str:
-        """将 cooked 中的相对资源 URL 转绝对 URL，剥离轻臾框包裹"""
+        """将 cooked 中的相对资源 URL 转绝对 URL，剥离轻臾框包裹与 meta 信息
+
+        Discourse 的话题里图片常被包在多层 div 中：
+          <div class="lightbox-wrapper">
+            <a class="lightbox" href="...">
+              <img src="...">
+            </a>
+            <div class="meta">
+              <span class="filename">image.png</span>
+              <span>988×703 46.8 KB</span>
+            </div>
+          </div>
+        只保留 <img>、丢弃 meta 信息，避免图加载失败后占据巨大空白。
+        """
         if not cooked_html:
             return ""
         try:
             import re as _re
-            # /uploads/...  →  https://linux.do/uploads/...
+            # 1) 绝对化 src/href（相对与协议无关 URL）
+            cooked_html = _re.sub(
+                r'(src|href)="(//[^"]+)"',
+                r'\1="https:\2',
+                cooked_html,
+            )
             cooked_html = _re.sub(
                 r'(src|href)="(/uploads/[^"]+)"',
-                r'\1="https://linux.do\2"',
+                r'\1="https://linux.do\2',
                 cooked_html,
             )
-            # 去掉 <a class="lightbox"...> 的包裹，但保留 <img>
-            cooked_html = _re.sub(
-                r'<a [^>]*class="lightbox"[^>]*>(.*?)</a>',
-                r'\1',
-                cooked_html,
-                flags=_re.DOTALL,
-            )
-            # 去掉 <div class="lightbox-wrapper"> 包裹
+
+            # 2) 整块剥离 lightbox-wrapper：仅保留内部 <img>，丢弃其余
+            def _pick_imgs(block: str) -> str:
+                imgs = _re.findall(r'<img\b[^>]*>', block, flags=_re.IGNORECASE)
+                return "".join(imgs)
+
             cooked_html = _re.sub(
                 r'<div[^>]*class="[^"]*lightbox-wrapper[^"]*"[^>]*>(.*?)</div>',
+                lambda m: _pick_imgs(m.group(1)),
+                cooked_html,
+                flags=_re.DOTALL,
+            )
+
+            # 3) 退路：直接裸的 <a class="lightbox"> 包裹，剥 a、保留 img
+            cooked_html = _re.sub(
+                r'<a [^>]*class="[^"]*\blightbox\b[^"]*"[^>]*>(.*?)</a>',
                 r'\1',
                 cooked_html,
                 flags=_re.DOTALL,
             )
+
+            # 4) 删除所有残留的 meta 信息块（文件尺寸、文件名、下载按钮等）
+            cooked_html = _re.sub(
+                r'<div[^>]*class="[^"]*\bmeta\b[^"]*"[^>]*>.*?</div>',
+                '',
+                cooked_html,
+                flags=_re.DOTALL,
+            )
+            cooked_html = _re.sub(
+                r'<span[^>]*class="[^"]*\bfilename\b[^"]*"[^>]*>.*?</span>',
+                '',
+                cooked_html,
+                flags=_re.DOTALL,
+            )
+
+            # 5) 删除代码块顶部的工具栏（copy/undo 按钮）防止占位
+            cooked_html = _re.sub(
+                r'<div[^>]*class="[^"]*\bcodeblock-buttons\b[^"]*"[^>]*>.*?</div>',
+                '',
+                cooked_html,
+                flags=_re.DOTALL,
+            )
+            cooked_html = _re.sub(
+                r'<pre[^>]*>\s*<div[^>]*class="[^"]*\bpre-actions\b[^"]*"[^>]*>.*?</div>',
+                '<pre>',
+                cooked_html,
+                flags=_re.DOTALL,
+            )
+
+            # 6) 删除 download 按钮、悬浮提示等装饰
+            cooked_html = _re.sub(
+                r'<a[^>]*class="[^"]*\bdownload[^"]*"[^>]*>.*?</a>',
+                '',
+                cooked_html,
+                flags=_re.DOTALL,
+            )
+
         except Exception:
             pass
         return cooked_html
@@ -820,15 +923,25 @@ class LinuxDoPreviewPlugin(Star):
             # 设置内容，等待图片资源加载
             page.set_content(html, wait_until="domcontentloaded", timeout=timeout_ms)
 
-            # 主动等所有 <img> 加载完成（最多 3s），避免空白图
+            # 主动等所有 <img> 加载完成（最多 3s），并剔除加载失败的图
             page.evaluate("""() => new Promise(resolve => {
                 const imgs = document.querySelectorAll('img');
                 if (!imgs.length) return resolve();
                 let done = 0;
-                const tick = () => { if (++done >= imgs.length) resolve(); };
+                const tick = (img) => {
+                    done++;
+                    // 图加载失败：移除 <img> 避免占位巨大空白
+                    if (img.complete && img.naturalWidth === 0) {
+                        img.remove();
+                    }
+                    if (done >= imgs.length) resolve();
+                };
                 imgs.forEach(img => {
-                    if (img.complete && img.naturalWidth > 0) tick();
-                    else { img.onload = img.onerror = tick; }
+                    if (img.complete) tick(img);
+                    else {
+                        img.addEventListener('load', () => tick(img), { once: true });
+                        img.addEventListener('error', () => tick(img), { once: true });
+                    }
                 });
                 setTimeout(resolve, 3000);
             })""")
