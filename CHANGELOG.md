@@ -3,6 +3,11 @@
 本项目所有显著变更都记录在此文件中。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.2] - 2026-06-16
+
+### 修复
+- **截图自适应尺寸，消除巨大空白**：`_render_html_screenshot` 改用 `page.locator('.card').screenshot()` 元素级截图，避免 `full_page=True` 捕获 `document.body.scrollHeight` 时因 viewport 撑高带来的大量空白区域。短帖从 1640×2400 缩减为 1520×678（-72%），长帖从 1640×4164 缩减为 1520×2874（-31%），零截断、零空白。元素截图失败时回退到全页模式
+
 ## [1.1.1] - 2026-06-16
 
 ### 修复
@@ -64,6 +69,7 @@
 - 截图时只截取首楼（隐藏所有回复帖）
 - 通过展开 Discourse 截断的内容 + 滚动触发懒加载，确保完整捕获楼主贴
 
+[1.1.2]: https://github.com/sakuradairong/astrbot_plugin_linuxdo/compare/7dda0e5...0496d68
 [1.1.1]: https://github.com/sakuradairong/astrbot_plugin_linuxdo/compare/f17dd28...26336b7
 [1.1.0]: https://github.com/sakuradairong/astrbot_plugin_linuxdo/compare/da9ad4d...6de4c31
 [1.0.0]: https://github.com/sakuradairong/astrbot_plugin_linuxdo/releases/tag/5f41aa7
