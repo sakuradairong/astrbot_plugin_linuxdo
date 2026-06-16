@@ -3,6 +3,11 @@
 本项目所有显著变更都记录在此文件中。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.3] - 2026-06-16
+
+### 修复
+- **截图完全脱离 `screenshot_full_page` 配置影响**：之前 `.card` 元素截图门控在 `if full_page` 后面，当用户配置 `full_page=false` 时回退到 `page.screenshot()` 的 viewport 模式，导致短帖留下 2000+px 空白、长帖被截断。现在元素截图成为唯一默认路径，`full_page` 仅作后备。短帖 (a3a7a0d) 从 1640×2400 缩到 1520×698，长帖 (3e6e0454) 从 1640×2400 截断的变成 1520×2596 完整，两种配置下结果完全一致
+
 ## [1.1.2] - 2026-06-16
 
 ### 修复
@@ -69,6 +74,7 @@
 - 截图时只截取首楼（隐藏所有回复帖）
 - 通过展开 Discourse 截断的内容 + 滚动触发懒加载，确保完整捕获楼主贴
 
+[1.1.3]: https://github.com/sakuradairong/astrbot_plugin_linuxdo/compare/0496d68...6aae30e
 [1.1.2]: https://github.com/sakuradairong/astrbot_plugin_linuxdo/compare/7dda0e5...0496d68
 [1.1.1]: https://github.com/sakuradairong/astrbot_plugin_linuxdo/compare/f17dd28...26336b7
 [1.1.0]: https://github.com/sakuradairong/astrbot_plugin_linuxdo/compare/da9ad4d...6de4c31
