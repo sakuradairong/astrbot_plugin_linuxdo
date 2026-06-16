@@ -590,9 +590,10 @@ class LinuxDoPreviewPlugin(Star):
         if self._has_auto_login():
             cookie_value = self._auto_login_and_capture(session)
             if cookie_value:
-                if self._inject_session_cookie(session, cookie_value) and self._check_login_state(session):
+                if self._inject_session_cookie(session, cookie_value):
                     self._auth_check_done = True
                     self._logged_in = True
+                    logger.info("[LinuxDoPreview] 自动登录完成，cookie 有效")
                     return True
             logger.warning("[LinuxDoPreview] 自动登录失败，降级为匿名访问")
             self._auth_check_done = True
