@@ -598,9 +598,6 @@ class LinuxDoPreviewPlugin(Star):
 
         # 都没配置 → 匿名
         return False
-        self._auth_check_done = True
-        self._logged_in = False
-        return False
 
     def _fetch_topic_data(self, session, url: str) -> dict | None:
         """通过 Discourse JSON API 获取完整的主题数据
