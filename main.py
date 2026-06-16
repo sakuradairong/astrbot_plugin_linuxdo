@@ -490,8 +490,13 @@ class LinuxDoPreviewPlugin(Star):
                 return { ok: resp.ok, status: resp.status, data: data };
             }""", {"login": username, "password": password})
 
+            logger.info(f"[LinuxDoPreview] fetch result type={type(result).__name__}, val={str(result)[:200]}")
             if not result:
                 logger.warning("[LinuxDoPreview] fetch /session.json 无响应")
+                return None
+
+            if not isinstance(result, dict):
+                logger.warning(f"[LinuxDoPreview] fetch 返回非 dict: {type(result).__name__}")
                 return None
 
             if not result.get("ok"):
