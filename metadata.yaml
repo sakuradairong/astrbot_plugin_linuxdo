@@ -1,11 +1,13 @@
 name: astrbot_plugin_linuxdo
 display_name: LinuxDo Preview
-short_desc: 自动检测 linux.do 链接，绕过 Cloudflare 截图发送预览
+short_desc: 自动检测 linux.do 链接，绕过 Cloudflare 渲染预览卡片
 desc: >
   自动检测聊天消息中的 linux.do 链接，使用 Scrapling 的 StealthySession
-  绕过 Cloudflare Turnstile 防护，获取页面截图和内容摘要并发送预览。
-  支持缓存避免重复请求，异步非阻塞设计。
+  绕过 Cloudflare Turnstile 防护。可选两种渲染方案：
+  1) 调 Discourse JSON API 拿完整数据，再用自定义 HTML 模板渲染干净预览卡片（推荐，无截断、不依赖 Discourse 页面布局）；
+  2) 传统方案：访问原页 + JS 隐藏非楼主 + 展开截断后截图。
+  支持截图缓存避免重复请求，异步非阻塞设计。
 author: RainySY
-version: 1.0.0
+version: 1.1.0
 repo: https://github.com/sakuradairong/astrbot_plugin_linuxdo
 astrbot_version: ">=4.16"

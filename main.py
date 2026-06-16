@@ -133,27 +133,55 @@ class LinuxDoPreviewPlugin(Star):
                 and sz > 50 * 1024  # 小于 50KB 的截图视为无效（黑屏/空白）
             )
 
+        use_api_render = self.config.get("use_api_render", True)
+
         with _StealthySession(  # type: ignore[union-attr]
             headless=True, solve_cloudflare=True
         ) as session:
-            # ── Step 1: fetch 触发 Cloudflare 解决，拿 HTML ──
-            resp = session.fetch(url)
-            html_str = resp.body.decode("utf-8", errors="replace")
-            title = self._extract_title(html_str)
-            content = self._extract_content(html_str)
-            logger.info(f"[LinuxDoPreview] 标题: {title}")
-
-            # ── Step 2: 新建标签页（复用 cf_clearance）截图 ──
-            if not screenshot_is_valid:
-                screenshot_path = self._take_screenshot(
-                    session, url, screenshot_path
-                )
+            if use_api_render:
+                # ── 方案 A：API + 自定义 HTML 渲染（推荐）──
+                topic_data = self._fetch_topic_data(session, url)
+                title = self._safe_title(topic_data)
+                if topic_data:
+                    content = self._extract_content_from_topic_data(topic_data)
+                    if not screenshot_is_valid:
+                        html = self._build_preview_html(topic_data, url)
+                        if html:
+                            screenshot_path = self._render_html_screenshot(
+                                session, html, screenshot_path
+                            )
+                else:
+                    # API 拉取失败 → 回退原方案
+                    resp = session.fetch(url)
+                    html_str = resp.body.decode("utf-8", errors="replace")
+                    title = self._extract_title(html_str)
+                    content = self._extract_content(html_str)
+                    if not screenshot_is_valid:
+                        screenshot_path = self._take_screenshot(
+                            session, url, screenshot_path
+                        )
             else:
+                # ── 方案 B：传统页面 + JS 隐藏 ──
+                resp = session.fetch(url)
+                html_str = resp.body.decode("utf-8", errors="replace")
+                title = self._extract_title(html_str)
+                content = self._extract_content_from_json(session, url)
+                if not content:
+                    content = self._extract_content(html_str)
+                if not screenshot_is_valid:
+                    screenshot_path = self._take_screenshot(
+                        session, url, screenshot_path
+                    )
+            if screenshot_is_valid:
                 with self._stats_lock:
                     self._stats["cache_hit"] += 1
             logger.info(
-                f"[LinuxDoPreview] 使用缓存截图: {screenshot_path.name}"
+                f"[LinuxDoPreview] 标题: {title}, 内容长度: {len(content)}"
             )
+            if screenshot_path:
+                logger.info(
+                    f"[LinuxDoPreview] 使用截图: {screenshot_path.name}"
+                )
 
         summary = self._build_summary(title, content, url)
         return screenshot_path, summary
@@ -176,7 +204,7 @@ class LinuxDoPreviewPlugin(Star):
 
             # ── 等待 Discourse 帖子内容渲染 ──
             try:
-                page.wait_for_selector(".cooked", timeout=min(timeout_ms, 10000))
+                page.wait_for_selector("#post_1", timeout=min(timeout_ms, 10000))
             except Exception:
                 page.wait_for_timeout(3000)  # 回退：固定等待
 
@@ -190,6 +218,7 @@ class LinuxDoPreviewPlugin(Star):
                 hide('.sidebar-wrapper');               // 左侧边栏
                 hide('.topic-navigation-wrapper');      // 帖子导航条
                 hide('.footer-nav.visible');            // 底部导航
+                hide('.post-stream');                   // 隐藏整个帖子流（后面单独显示楼主）
 
                 // 隐藏所有回复帖子，只保留楼主
                 const posts = document.querySelectorAll('.topic-post');
@@ -201,23 +230,123 @@ class LinuxDoPreviewPlugin(Star):
 
             # ── 展开 Discourse 截断的长帖 ──
             page.evaluate("""() => {
-                document.querySelectorAll('.expand-post').forEach(el => el.remove());
-                document.querySelectorAll('.cooked').forEach(el => {
-                    el.style.maxHeight = 'none';
-                    el.style.overflow = 'visible';
+                // 移除所有展开按钮和截断遮罩
+                const removeSelectors = [
+                    '.expand-post',
+                    '.gap-bottom',
+                    '.gap',
+                    '.large-post-container .show-more',
+                    '.topic-body .show-more',
+                    '.cooked .show-more',
+                    '.lightbox',
+                ];
+                removeSelectors.forEach(sel => {
+                    document.querySelectorAll(sel).forEach(el => el.remove());
                 });
-                document.querySelectorAll('.gap-bottom').forEach(el => el.remove());
-                document.querySelectorAll('.topic-body').forEach(el => {
+
+                // 移除所有 max-height / overflow 限制
+                const unclampSelectors = [
+                    '.cooked',
+                    '.topic-body',
+                    '#post_1 .cooked',
+                    '#post_1 .topic-body',
+                    '#post_1 .contents',
+                    '.large-post-container',
+                ];
+                unclampSelectors.forEach(sel => {
+                    document.querySelectorAll(sel).forEach(el => {
+                        el.style.maxHeight = 'none';
+                        el.style.overflow = 'visible';
+                        el.style.height = 'auto';
+                    });
+                });
+
+                // 展开 Discourse 长帖截断（data-* 属性方式）
+                document.querySelectorAll('[data-expanded]').forEach(el => {
+                    el.setAttribute('data-expanded', 'true');
+                });
+                // 移除 truncated 标记
+                document.querySelectorAll('.truncated').forEach(el => {
+                    el.classList.remove('truncated');
+                });
+            }""")
+
+            # ── 点击可能存在的展开按钮 ──
+            try:
+                expand_buttons = page.query_selector_all(
+                    '#post_1 .expand-post, #post_1 .show-more, '
+                    '#post_1 button[class*="expand"], '
+                    '#post_1 a[class*="expand"]'
+                )
+                for btn in expand_buttons:
+                    try:
+                        btn.click()
+                        page.wait_for_timeout(300)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            # ── 再次展开，防止点击按钮后重新截断 ──
+            page.evaluate("""() => {
+                ['#post_1 .cooked', '#post_1 .topic-body', '#post_1 .contents'].forEach(sel => {
+                    document.querySelectorAll(sel).forEach(el => {
+                        el.style.maxHeight = 'none';
+                        el.style.overflow = 'visible';
+                        el.style.height = 'auto';
+                    });
+                });
+                // 确保图片容器也不截断
+                document.querySelectorAll('#post_1 .lightbox-wrapper').forEach(el => {
                     el.style.maxHeight = 'none';
                     el.style.overflow = 'visible';
                 });
             }""")
 
-            # ── 滚动整个页面，触发懒加载图片 ──
-            total_height = page.evaluate("document.body.scrollHeight")
-            for y in range(0, total_height, 400):
-                page.evaluate(f"window.scrollTo(0, {y})")
-                page.wait_for_timeout(150)
+            # ── 滚动楼主帖子，触发懒加载图片 ──
+            post1_box = page.evaluate("""() => {
+                const p1 = document.querySelector('#post_1');
+                if (!p1) return null;
+                const rect = p1.getBoundingClientRect();
+                return { top: rect.top + window.scrollY, height: rect.height };
+            }""")
+            if post1_box:
+                post_top = int(post1_box.get('top', 0))
+                post_height = int(post1_box.get('height', 0))
+                for y in range(post_top, post_top + post_height, 400):
+                    page.evaluate(f"window.scrollTo(0, {y})")
+                    page.wait_for_timeout(200)
+            else:
+                # 回退：滚动整个页面
+                total_height = page.evaluate("document.body.scrollHeight")
+                for y in range(0, total_height, 400):
+                    page.evaluate(f"window.scrollTo(0, {y})")
+                    page.wait_for_timeout(200)
+
+            # ── 等待图片加载完成 ──
+            page.evaluate("""() => {
+                return new Promise(resolve => {
+                    const imgs = document.querySelectorAll('#post_1 img');
+                    let loaded = 0;
+                    const total = imgs.length;
+                    if (total === 0) return resolve();
+                    imgs.forEach(img => {
+                        if (img.complete) {
+                            loaded++;
+                            if (loaded >= total) resolve();
+                        } else {
+                            img.onload = img.onerror = () => {
+                                loaded++;
+                                if (loaded >= total) resolve();
+                            };
+                        }
+                    });
+                    // 最多等 3 秒
+                    setTimeout(resolve, 3000);
+                });
+            }""")
+
+            # ── 滚动回顶部 ──
             page.evaluate("window.scrollTo(0, 0)")
             page.wait_for_timeout(500)
 
@@ -242,6 +371,93 @@ class LinuxDoPreviewPlugin(Star):
 
     # ─────────── 文本提取 ───────────
 
+    def _extract_content_from_json(self, session, url: str) -> str:
+        """通过 Discourse JSON API 获取完整的楼主帖子内容
+        
+        Discourse 的 .json 端点返回结构化数据，包含完整的 cooked HTML，
+        不受页面截断、懒加载或 Cloudflare 渲染问题的影响。
+        """
+        try:
+            # 构造 JSON URL：topic-url.json 或 topic-url/1.json
+            json_url = url.rstrip('/')
+            if not json_url.endswith('.json'):
+                # 对于帖子链接如 /t/topic-slug/12345/5，取前两段
+                parts = json_url.split('/')
+                # 找到 /t/ 后的部分
+                t_idx = -1
+                for i, p in enumerate(parts):
+                    if p == 't':
+                        t_idx = i
+                        break
+                if t_idx >= 0 and len(parts) > t_idx + 2:
+                    # 重建为 /t/slug/id 格式
+                    json_url = '/'.join(parts[:t_idx + 3])
+                json_url += '.json'
+            
+            logger.info(f"[LinuxDoPreview] JSON API 请求: {json_url}")
+            resp = session.fetch(json_url)
+            if resp.status != 200:
+                logger.info(f"[LinuxDoPreview] JSON API 返回 {resp.status}")
+                return ""
+            
+            import json
+            data = json.loads(resp.body.decode("utf-8", errors="replace"))
+            
+            # 从 post_stream 中提取第一个帖子（楼主）
+            post_stream = data.get("post_stream", {})
+            posts = post_stream.get("posts", [])
+            if not posts:
+                return ""
+            
+            first_post = posts[0]
+            cooked_html = first_post.get("cooked", "")
+            if not cooked_html:
+                return ""
+            
+            # 使用 lxml 解析 HTML 并提取纯文本
+            if _lh is not None:
+                tree = _lh.fromstring(cooked_html)
+                return _clean_text(tree.text_content())
+            
+            # 回退：正则去标签
+            text = re.sub(r"<[^>]+>", " ", cooked_html)
+            text = re.sub(r"\s+", " ", text).strip()
+            return html_mod.unescape(text)
+            
+        except Exception as e:
+            logger.info(f"[LinuxDoPreview] JSON API 提取失败: {type(e).__name__}: {e}")
+            return ""
+
+    def _fetch_topic_data(self, session, url: str) -> dict | None:
+        """通过 Discourse JSON API 获取完整的主题数据
+        
+        返回的 dict 包含帖子原始数据（cooked HTML、作者、标签、统计等），
+        可同时供文本提取和自定义 HTML 渲染使用。
+        """
+        try:
+            json_url = url.rstrip('/')
+            if not json_url.endswith('.json'):
+                parts = json_url.split('/')
+                t_idx = -1
+                for i, p in enumerate(parts):
+                    if p == 't':
+                        t_idx = i
+                        break
+                if t_idx >= 0 and len(parts) > t_idx + 2:
+                    json_url = '/'.join(parts[:t_idx + 3])
+                json_url += '.json'
+
+            logger.info(f"[LinuxDoPreview] 拉取 topic JSON: {json_url}")
+            resp = session.fetch(json_url)
+            if resp.status != 200:
+                logger.info(f"[LinuxDoPreview] topic JSON 返回 {resp.status}")
+                return None
+            import json
+            return json.loads(resp.body.decode("utf-8", errors="replace"))
+        except Exception as e:
+            logger.info(f"[LinuxDoPreview] topic JSON 拉取失败: {type(e).__name__}: {e}")
+            return None
+
     @staticmethod
     def _extract_title(html_str: str) -> str:
         m = re.search(r"<title>(.*?)</title>", html_str, re.DOTALL | re.IGNORECASE)
@@ -265,28 +481,47 @@ class LinuxDoPreviewPlugin(Star):
         return ""
 
     def _extract_via_lxml(self, html_str: str) -> str:
+        if _lh is None:
+            return ""
         tree = _lh.fromstring(html_str)
-        parts = []
-        for el in tree.cssselect(".cooked"):
-            text = _clean_text(el.text_content())
-            if len(text) > 15:
-                parts.append(text)
-            if len(parts) >= 3:
-                break
-        return "\n\n".join(parts)
+        # 使用更精确的选择器：只提取楼主的内容
+        # #post_1 是楼主帖子的 ID
+        post_1 = tree.cssselect("#post_1")
+        if not post_1:
+            # 回退：提取第一个 .cooked
+            for el in tree.cssselect(".cooked"):
+                text = _clean_text(el.text_content())
+                if len(text) > 15:
+                    return text
+            return ""
+        # 提取楼主帖子中的 .cooked 内容
+        cooked = post_1[0].cssselect(".cooked")
+        if cooked:
+            return _clean_text(cooked[0].text_content())
+        return ""
 
     def _extract_via_regex(self, html_str: str) -> str:
-        parts = []
+        # 使用更精确的正则表达式：匹配楼主帖子
+        # 先尝试匹配 #post_1 的帖子
+        post_1_match = re.search(
+            r'<article[^>]*id="post_1"[^>]*>.*?<div\s+class="cooked">(.*?)</div>\s*</article>',
+            html_str,
+            re.DOTALL
+        )
+        if post_1_match:
+            text = re.sub(r"<[^>]+>", " ", post_1_match.group(1))
+            text = re.sub(r"\s+", " ", text).strip()
+            if len(text) > 15:
+                return text
+        # 回退：提取第一个 .cooked
         for m in re.finditer(
             r'<div\s+class="cooked">(.*?)</div>\s*</article>', html_str, re.DOTALL
         ):
             text = re.sub(r"<[^>]+>", " ", m.group(1))
             text = re.sub(r"\s+", " ", text).strip()
             if len(text) > 15:
-                parts.append(text)
-            if len(parts) >= 3:
-                break
-        return "\n\n".join(parts)
+                return text
+        return ""
 
     def _build_summary(self, title: str, content: str, url: str) -> str:
         lines = [f"📌 {title}"]
@@ -299,6 +534,322 @@ class LinuxDoPreviewPlugin(Star):
         lines.append("")
         lines.append(f"🔗 {url}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _safe_title(topic_data: dict | None) -> str:
+        """从 topic JSON 中安全提取标题（剥除尾部 - Linux DO 后缀）"""
+        if not topic_data:
+            return "无标题"
+        title = topic_data.get("title") or topic_data.get("fancy_title") or "无标题"
+        title = re.sub(
+            r"\s*[-–—|]\s*(LINUX\s*DO|LINUXDO).*$", "", title, flags=re.IGNORECASE
+        )
+        return title.strip() or "无标题"
+
+    def _extract_content_from_topic_data(self, topic_data: dict) -> str:
+        """从已拉取的 topic JSON 中提取楼主帖子纯文本"""
+        try:
+            post_stream = topic_data.get("post_stream", {}) or {}
+            posts = post_stream.get("posts", []) or []
+            if not posts:
+                return ""
+            cooked_html = posts[0].get("cooked", "") or ""
+            if not cooked_html:
+                return ""
+            if _lh is not None:
+                tree = _lh.fromstring(cooked_html)
+                return _clean_text(tree.text_content())
+            text = re.sub(r"<[^>]+>", " ", cooked_html)
+            text = re.sub(r"\s+", " ", text).strip()
+            return html_mod.unescape(text)
+        except Exception as e:
+            logger.info(f"[LinuxDoPreview] topic JSON 文本提取失败: {type(e).__name__}: {e}")
+            return ""
+
+    # ─────────── HTML 预览渲染（API + Scrapling 协作） ───────────
+
+    def _build_preview_html(self, topic_data: dict, url: str) -> str:
+        """根据 topic JSON 生成自定义预览 HTML
+        
+        优点：布局干净、包含完整内容（不受 Discourse 页面截断/懒加载影响）、
+        可控制样式适配聊天平台预览图。
+        """
+        # 抽取关键字段
+        title = html_mod.escape(topic_data.get("title", "无标题") or "无标题")
+        fancy_title = html_mod.escape(topic_data.get("fancy_title", title) or title)
+        posts_count = topic_data.get("posts_count", 0)
+        views = topic_data.get("views", 0)
+        like_count = topic_data.get("like_count", 0)
+        created_at = topic_data.get("created_at", "")
+        tags = topic_data.get("tags", []) or []
+
+        post_stream = topic_data.get("post_stream", {}) or {}
+        posts = post_stream.get("posts", []) or []
+        if not posts:
+            return ""
+        first = posts[0]
+        author_name = html_mod.escape(first.get("name", "") or first.get("username", "") or "")
+        author_username = html_mod.escape(first.get("username", "") or "")
+        author_avatar = first.get("avatar_template", "") or ""
+        if author_avatar and author_avatar.startswith("/"):
+            author_avatar = "https://linux.do" + author_avatar
+        author_avatar = author_avatar.replace("{size}", "120")
+        post_created = first.get("created_at", "") or ""
+        post_like = first.get("like_count", 0)
+        cooked_html = first.get("cooked", "") or ""
+
+        # 把 Discourse 相对资源 URL 补全为绝对 URL
+        cooked_html = self._normalize_cooked_urls(cooked_html)
+
+        # 发布时间格式化
+        created_text = ""
+        if post_created:
+            try:
+                created_text = post_created.split("T")[0]
+            except Exception:
+                created_text = post_created
+
+        tags_html = "".join(
+            f'<span class="tag">#{html_mod.escape(t["name"] if isinstance(t, dict) else str(t))}</span>'
+            for t in tags[:6]
+        )
+
+        # 头像、统计数字格式化
+        views_text = self._format_count(views)
+        posts_text = self._format_count(posts_count)
+        likes_text = self._format_count(like_count)
+
+        # 完整预览 HTML（含内联 CSS）
+        return f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>{title}</title>
+<style>
+  * {{ box-sizing: border-box; }}
+  html, body {{ margin: 0; padding: 0; }}
+  body {{
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
+    background: #f5f6f8;
+    color: #1c1c1c;
+    padding: 24px;
+    line-height: 1.6;
+  }}
+  .card {{
+    background: #ffffff;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    max-width: 760px;
+    margin: 0 auto;
+    overflow: hidden;
+  }}
+  .header {{
+    padding: 20px 24px 16px 24px;
+    border-bottom: 1px solid #eef0f3;
+  }}
+  .title {{
+    font-size: 20px;
+    font-weight: 700;
+    color: #1769c4;
+    margin: 0 0 10px 0;
+    line-height: 1.4;
+    word-break: break-word;
+  }}
+  .meta {{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #6a737c;
+    font-size: 13px;
+  }}
+  .meta img.avatar {{
+    width: 28px; height: 28px; border-radius: 50%;
+    object-fit: cover; background: #ddd;
+  }}
+  .meta .name {{ color: #1c1c1c; font-weight: 500; }}
+  .stats {{
+    padding: 10px 24px;
+    display: flex;
+    gap: 18px;
+    color: #6a737c;
+    font-size: 13px;
+    border-bottom: 1px solid #eef0f3;
+    background: #fafbfc;
+  }}
+  .stats span::before {{ margin-right: 4px; }}
+  .tags {{
+    padding: 10px 24px 0 24px;
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }}
+  .tag {{
+    background: #e8f0fe;
+    color: #1769c4;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+  }}
+  .content {{
+    padding: 16px 24px 8px 24px;
+    word-break: break-word;
+  }}
+  .content p {{ margin: 0 0 10px 0; }}
+  .content h1, .content h2, .content h3 {{ margin: 16px 0 8px 0; }}
+  .content img {{
+    max-width: 100%;
+    height: auto;
+    border-radius: 6px;
+    display: block;
+    margin: 8px 0;
+  }}
+  .content pre, .content code {{
+    background: #f6f8fa;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 13px;
+  }}
+  .content pre {{ padding: 10px 12px; overflow-x: auto; }}
+  .content blockquote {{
+    border-left: 3px solid #d0d7de;
+    margin: 8px 0;
+    padding: 0 12px;
+    color: #57606a;
+    background: #f6f8fa;
+  }}
+  .content a {{ color: #1769c4; text-decoration: none; }}
+  .content ul, .content ol {{ padding-left: 24px; }}
+  .footer {{
+    padding: 12px 24px 18px 24px;
+    border-top: 1px solid #eef0f3;
+    color: #6a737c;
+    font-size: 12px;
+    word-break: break-all;
+  }}
+  .footer a {{ color: #1769c4; text-decoration: none; }}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <h1 class="title">{fancy_title}</h1>
+      <div class="meta">
+        <img class="avatar" src="{html_mod.escape(author_avatar)}" alt="avatar">
+        <span class="name">{author_name}</span>
+        <span>·</span>
+        <span>{html_mod.escape(created_text)}</span>
+      </div>
+    </div>
+    <div class="stats">
+      <span>👀 {views_text}</span>
+      <span>💬 {posts_text}</span>
+      <span>❤ {likes_text}</span>
+    </div>
+    {('<div class="tags">' + tags_html + '</div>') if tags else ''}
+    <div class="content">
+      {cooked_html}
+    </div>
+    <div class="footer">
+      🔗 <a href="{html_mod.escape(url)}">{html_mod.escape(url)}</a>
+    </div>
+  </div>
+</body>
+</html>"""
+
+    @staticmethod
+    def _format_count(n: int) -> str:
+        try:
+            n = int(n)
+        except (TypeError, ValueError):
+            return str(n)
+        if n >= 10000:
+            return f"{n/10000:.1f}w"
+        if n >= 1000:
+            return f"{n/1000:.1f}k"
+        return str(n)
+
+    @staticmethod
+    def _normalize_cooked_urls(cooked_html: str) -> str:
+        """将 cooked 中的相对资源 URL 转绝对 URL，剥离轻臾框包裹"""
+        if not cooked_html:
+            return ""
+        try:
+            import re as _re
+            # /uploads/...  →  https://linux.do/uploads/...
+            cooked_html = _re.sub(
+                r'(src|href)="(/uploads/[^"]+)"',
+                r'\1="https://linux.do\2"',
+                cooked_html,
+            )
+            # 去掉 <a class="lightbox"...> 的包裹，但保留 <img>
+            cooked_html = _re.sub(
+                r'<a [^>]*class="lightbox"[^>]*>(.*?)</a>',
+                r'\1',
+                cooked_html,
+                flags=_re.DOTALL,
+            )
+            # 去掉 <div class="lightbox-wrapper"> 包裹
+            cooked_html = _re.sub(
+                r'<div[^>]*class="[^"]*lightbox-wrapper[^"]*"[^>]*>(.*?)</div>',
+                r'\1',
+                cooked_html,
+                flags=_re.DOTALL,
+            )
+        except Exception:
+            pass
+        return cooked_html
+
+    def _render_html_screenshot(self, session, html: str, save_path: Path) -> Path | None:
+        """在已破解 CF 的浏览器上下文中渲染自定义 HTML 并截图
+        
+        page.set_content() 不走网络导航，纯本地渲染：零 Cloudflare、零超时、
+        零依赖 Discourse 页面布局。content-length 限制为实际内容大小。
+        """
+        timeout_ms = self.config.get("screenshot_timeout", 15) * 1000
+        if not html:
+            return None
+        try:
+            ctx = session.context
+            if not ctx:
+                return None
+            page = ctx.new_page()
+            page.set_viewport_size({"width": 820, "height": 1200})
+
+            # 设置内容，等待图片资源加载
+            page.set_content(html, wait_until="domcontentloaded", timeout=timeout_ms)
+
+            # 主动等所有 <img> 加载完成（最多 3s），避免空白图
+            page.evaluate("""() => new Promise(resolve => {
+                const imgs = document.querySelectorAll('img');
+                if (!imgs.length) return resolve();
+                let done = 0;
+                const tick = () => { if (++done >= imgs.length) resolve(); };
+                imgs.forEach(img => {
+                    if (img.complete && img.naturalWidth > 0) tick();
+                    else { img.onload = img.onerror = tick; }
+                });
+                setTimeout(resolve, 3000);
+            })""")
+
+            page.wait_for_timeout(300)
+
+            full_page = self.config.get("screenshot_full_page", True)
+            page.screenshot(
+                path=str(save_path),
+                full_page=full_page,
+                timeout=timeout_ms,
+            )
+            sz = save_path.stat().st_size
+            logger.info(
+                f"[LinuxDoPreview] 渲染截图: {save_path.name} ({sz / 1024:.1f} KB)"
+            )
+            page.close()
+            return save_path
+        except Exception as e:
+            logger.warning(f"[LinuxDoPreview] HTML 渲染失败: {type(e).__name__}: {e}")
+            return None
 
     # ─────────── 管理指令 ───────────
 

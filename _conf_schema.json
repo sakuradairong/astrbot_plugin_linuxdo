@@ -1,26 +1,32 @@
 {
   "cache_ttl": {
-    "description": "Screenshot cache TTL (seconds)",
+    "description": "截图缓存有效期（秒）",
     "type": "int",
     "default": 1800,
-    "hint": "Cached screenshot validity period. Default 1800s (30min). Set to 0 to disable caching."
+    "hint": "截图缓存的有效期，默认 1800 秒（30 分钟）。设为 0 禁用缓存。"
   },
   "max_content_length": {
-    "description": "Max content preview length (chars)",
+    "description": "内容预览最大长度（字符）",
     "type": "int",
     "default": 400,
-    "hint": "Maximum characters of text preview extracted from the page."
+    "hint": "从页面提取的文字预览最大字符数。"
   },
   "screenshot_timeout": {
-    "description": "Screenshot timeout (seconds)",
+    "description": "截图超时时间（秒）",
     "type": "int",
     "default": 15,
-    "hint": "Max seconds to wait for page screenshot."
+    "hint": "等待页面截图的最大秒数。"
   },
   "screenshot_full_page": {
-    "description": "Full page screenshot mode",
+    "description": "全页截图模式",
     "type": "bool",
     "default": true,
-    "hint": "When true (default), captures full page. Set to false for viewport-only preview."
+    "hint": "默认开启全页截图，关闭后仅截取视口可见区域。"
+  },
+  "use_api_render": {
+    "description": "使用 API + 自定义 HTML 渲染",
+    "type": "bool",
+    "default": true,
+    "hint": "启用后用 Discourse JSON API 拉数据+自定义 HTML 模板渲染（推荐，完整、干净、不受页面截断/懒加载影响）；关闭则走传统页面截图方案。"
   }
 }
