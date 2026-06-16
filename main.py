@@ -507,26 +507,19 @@ class LinuxDoPreviewPlugin(Star):
                 return None
 
             # /login POST 返回 200 表示登录成功（返回 HTML 页面，不是 JSON）
-            # 登录成功后浏览器自动设置 _forum_session cookie
-            # 用 page.evaluate 获取 cookie
-            cookie_val = page.evaluate("""() => {
-                const m = document.cookie.match(/(?:^|;\\s*)_forum_session=([^;]*)/);
-                return m ? decodeURIComponent(m[1]) : null;
-            }""")
+            # 登录成功后浏览器自动设置 _forum_session cookie（HttpOnly，JS 不可见）
+            # 用 ctx.cookies() 获取（带 URL 参数）
+            cookie_val = None
+            try:
+                for c in (session.context.cookies() or []):
+                    if isinstance(c, dict) and c.get("name") == "_forum_session":
+                        cookie_val = c.get("value", "")
+                        break
+            except Exception:
+                pass
             if cookie_val:
                 logger.info(f"[LinuxDoPreview] 自动登录成功, cookie={len(cookie_val)} chars")
                 return cookie_val
-
-            # 回退：尝试 ctx.cookies()
-            try:
-                for c in (ctx.cookies() or []):
-                    if isinstance(c, dict) and c.get("name") == "_forum_session":
-                        val = c.get("value", "")
-                        if val:
-                            logger.info(f"[LinuxDoPreview] 自动登录成功, cookie={len(val)} chars (ctx)")
-                            return val
-            except Exception:
-                pass
 
             logger.warning("[LinuxDoPreview] 登录成功但未找到 _forum_session cookie")
             return None
