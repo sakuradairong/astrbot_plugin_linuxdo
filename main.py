@@ -434,12 +434,42 @@ class LinuxDoPreviewPlugin(Star):
             logger.info(f"[LinuxDoPreview] JSON API 提取失败: {type(e).__name__}: {e}")
             return ""
 
-    # ─────────── 登录支持 ───────────
+    # ─────────── 登录支持（Cookie 注入） ───────────
 
-    def _has_credentials(self) -> bool:
-        username = self.config.get("linuxdo_username", "") or ""
-        password = self.config.get("linuxdo_password", "") or ""
-        return bool(username and password)
+    def _has_session_cookie(self) -> bool:
+        """检查是否配置了会话 cookie"""
+        cookie = self.config.get("linuxdo_session_cookie", "") or ""
+        return bool(cookie.strip())
+
+    def _inject_session_cookie(self, session) -> bool:
+        """将会话 cookie 注入到浏览器上下文中
+
+        Returns: True 表示注入成功且验证通过，False 表示失败
+        """
+        cookie_value = (self.config.get("linuxdo_session_cookie", "") or "").strip()
+        if not cookie_value:
+            return False
+
+        ctx = session.context
+        if not ctx:
+            return False
+
+        try:
+            # 注入 _forum_session cookie
+            ctx.add_cookies([{
+                "name": "_forum_session",
+                "value": cookie_value,
+                "domain": "linux.do",
+                "path": "/",
+                "httpOnly": True,
+                "secure": True,
+                "sameSite": "Lax",
+            }])
+            logger.info("[LinuxDoPreview] 已注入会话 cookie")
+            return True
+        except Exception as e:
+            logger.warning(f"[LinuxDoPreview] Cookie 注入失败: {type(e).__name__}: {e}")
+            return False
 
     def _check_login_state(self, session) -> bool:
         """检查当前会话是否已登录"""
@@ -455,97 +485,36 @@ class LinuxDoPreviewPlugin(Star):
         except Exception:
             return False
 
-    def _do_login(self, session) -> bool:
-        """通过 Playwright 提交 Discourse 登录表单
-
-        Discourse HTML form POST 跳转不走 CSRF 检查，
-        服务端使用 _forum_session cookie 鉴权。成功后 cookie 在
-        同一 StealthySession 的 context 中共享。
-
-        Returns: True 表示登录成功，False 表示失败
-        """
-        username = self.config.get("linuxdo_username", "") or ""
-        password = self.config.get("linuxdo_password", "") or ""
-        ctx = session.context
-        if not ctx or not username or not password:
-            return False
-
-        page = None
-        try:
-            page = ctx.new_page()
-            # 访问 /login 页面（此时 CF 已解，先前 fetch 已设 cf_clearance）
-            # 用 wait_until="load" + networkidle + 额外等待，让 SPA 实际渲染表单
-            page.goto("https://linux.do/login", wait_until="load", timeout=30000)
-            try:
-                page.wait_for_load_state("networkidle", timeout=10000)
-            except Exception:
-                pass
-            page.wait_for_timeout(1500)  # 预留 SPA 渲染时间
-            # Discourse /login 页面有多个表单，选包含 username + password 的
-            # 通常是第二个表单 (post 'username','password','redirect','submit')
-            try:
-                page.wait_for_selector('input[name="username"][type="text"]', timeout=15000)
-            except Exception:
-                logger.warning("[LinuxDoPreview] 登录页未出现 username 输入框")
-                return False
-            page.fill('input[name="username"][type="text"]', username)
-            page.fill('input[type="password"]', password)
-            # 提交：使用按钮 click；不设 XHR 头以走表单 POST 路径
-            page.click('input[type="submit"][name="submit"], button[type="submit"]')
-            # 等待跳转：登录成功会从 /login 跳到首页或其他页面
-            try:
-                page.wait_for_url(
-                    lambda u: "/login" not in u and "/session" not in u,
-                    timeout=20000,
-                )
-            except Exception:
-                # 登录失败：停留在 /login，检查错误
-                err_el = page.query_selector(".alert-error, .login-error, .flash.error")
-                if err_el:
-                    txt = (err_el.text_content() or "").strip()
-                    logger.warning(f"[LinuxDoPreview] 登录失败: {txt[:150]}")
-                else:
-                    logger.warning("[LinuxDoPreview] 登录超时或停留在登录页")
-                return False
-            # 额外验证：拉取 /session/current_user.json 确认登录态
-            if self._check_login_state(session):
-                logger.info(f"[LinuxDoPreview] 登录成功: {username}")
-                return True
-            logger.warning("[LinuxDoPreview] 表单已提交但未检测到登录态")
-            return False
-        except Exception as e:
-            logger.warning(f"[LinuxDoPreview] 登录异常: {type(e).__name__}: {str(e)[:150]}")
-            return False
-        finally:
-            if page:
-                try:
-                    page.close()
-                except Exception:
-                    pass
-
     def _ensure_authenticated(self, session) -> bool:
-        """在已绕过 CF 的上下文中按需登录。后续所有 fetch 都会复用登录态。
+        """在已绕过 CF 的上下文中按需注入 cookie。后续所有 fetch 都会复用登录态。
 
         逻辑：
-        1) 未配置凭据 → 匿名访问
+        1) 未配置 cookie → 匿名访问
         2) 本会话已检查过且登录成功 → 跳过
-        3) 调用 /session/current_user.json 检测当前是否已登录（失败不熔断）
-        4) 未登录则提交登录表单
+        3) 注入 cookie 到浏览器上下文
+        4) 调用 /session/current_user.json 验证登录态
         """
-        if not self._has_credentials():
+        if not self._has_session_cookie():
             return False
         if self._auth_check_done:
             return self._logged_in
-        # 先检测是否已登录（避免重复登录）。检测失败一律当作未登录，走登录流程。
+
+        # 注入 cookie
+        if not self._inject_session_cookie(session):
+            self._auth_check_done = True
+            return False
+
+        # 验证登录态
         if self._check_login_state(session):
             self._auth_check_done = True
             self._logged_in = True
-            logger.info("[LinuxDoPreview] 会话已登录，跳过")
+            logger.info("[LinuxDoPreview] Cookie 登录验证成功")
             return True
-        # 未登录则走登录流程
-        self._logged_in = self._do_login(session)
+
+        logger.warning("[LinuxDoPreview] Cookie 无效或已过期，请重新获取")
         self._auth_check_done = True
-        return self._logged_in
+        self._logged_in = False
+        return False
 
     def _fetch_topic_data(self, session, url: str) -> dict | None:
         """通过 Discourse JSON API 获取完整的主题数据

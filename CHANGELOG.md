@@ -6,13 +6,16 @@
 ## [1.2.0] - 2026-06-16
 
 ### 新增
-- **LinuxDo 账户登录支持**：可配置 `linuxdo_username` / `linuxdo_password`，插件自动通过 Playwright 提交 Discourse 登录表单（`/login` POST），登录态 cookie 在同一 StealthySession 内共享，可访问受限分类、私信预览等非公开内容。留空则保持匿名访问，行为与以前完全一致
-- 登录流程：`_ensure_authenticated()` 按需触发，跨 fetch 缓存登录状态（`_auth_check_done`），避免重复登录
-- 登录失败（凭据错误、2FA、风控）时**优雅降级到匿名**，不阻断渲染、不抛异常
+- **会话 Cookie 注入访问受限内容**：配置 `linuxdo_session_cookie` 后，插件自动将 cookie 注入 StealthySession 的浏览器上下文，可访问受限分类、私信等非公开内容。留空则保持匿名访问
+- 获取方式：浏览器登录 linux.do → F12 → Application → Cookies → linux.do → `_forum_session` → 复制 Value
+- Cookie 注入后自动验证登录态，无效/过期时降级为匿名访问
+
+### 变更
+- 替换原有的 Playwright 表单登录方案（依赖 SPA 渲染、CSRF 处理，不够稳定）为 Cookie 注入方案（零浏览器依赖、直接注入、最快最稳）
 
 ### 配置
-- 新增 `linuxdo_username`（string，可选）：配置后插件自动登录
-- 新增 `linuxdo_password`（string，可选，敏感）：密码以明文存储，建议使用专用低权限账户
+- 新增 `linuxdo_session_cookie`（string，可选）：会话 cookie 值
+- 移除 `linuxdo_username`、`linuxdo_password`（不再需要，linux.do 不提供用户级 API key）
 
 ## [1.1.3] - 2026-06-16
 
