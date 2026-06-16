@@ -461,17 +461,25 @@ class LinuxDoPreviewPlugin(Star):
         page = None
         try:
             page = ctx.new_page()
-            # 先访问任意页面以建立 CF clearance + _forum_session cookie
+            # 先访问主页建立 CF clearance
             page.goto("https://linux.do/", wait_until="domcontentloaded", timeout=30000)
             try:
                 page.wait_for_load_state("networkidle", timeout=10000)
             except Exception:
                 pass
-            page.wait_for_timeout(1000)
+            page.wait_for_timeout(2000)
 
-            # 用 Playwright 表单提交登录（Discourse SPA 表单用 id 选择器）
+            # 导航到 /login 页面（Discourse SPA 内部导航，不触发 CF）
+            page.evaluate("window.location.href = 'https://linux.do/login'")
+            page.wait_for_timeout(5000)
             try:
-                page.wait_for_selector('#login-account-name', timeout=10000)
+                page.wait_for_load_state("networkidle", timeout=10000)
+            except Exception:
+                pass
+
+            # 等待登录表单出现
+            try:
+                page.wait_for_selector('#login-account-name', timeout=15000)
             except Exception:
                 logger.warning("[LinuxDoPreview] 登录表单未出现")
                 return None
@@ -479,7 +487,7 @@ class LinuxDoPreviewPlugin(Star):
             page.fill('#login-account-name', username)
             page.fill('#login-account-password', password)
             page.click('#login-button')
-            page.wait_for_timeout(5000)  # 等待登录完成
+            page.wait_for_timeout(8000)  # 等待登录完成
 
             # 从 ctx.cookies() 获取 HttpOnly _forum_session cookie
             cookie_val = None
