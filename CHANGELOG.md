@@ -3,6 +3,22 @@
 本项目所有显著变更都记录在此文件中。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 新增
+- **实验性账号密码登录**：配置 `linuxdo_username` + `linuxdo_password` 后，插件会尝试打开 linux.do 登录页、填写表单并提交。登录成功后缓存当前浏览器上下文中的 Cookie，后续请求自动复用
+- **手动 hCaptcha 登录命令**：新增 `/linuxdo_login`，在运行 AstrBot 的机器上打开可见浏览器窗口，允许用户手动完成人机验证和登录，成功后缓存 Cookie
+- **无 GUI 服务器 Cookie 导入命令**：新增 `/linuxdo_cookie <cookie>`，支持在云服务器部署时从本地浏览器复制 Cookie 后临时导入，验证成功后缓存在插件内存
+- **远程可视浏览器 Cookie 拉取**：新增 `remote_browser_cdp_endpoint` 配置和 `/linuxdo_cookie_pull` 命令，可从已登录的云端可视 Chromium 中通过 CDP 读取 linux.do Cookie 并验证缓存
+- **Cookie 状态管理命令**：新增 `/linuxdo_cookie_status` 查看登录态，新增 `/linuxdo_cookie_watch` 将当前会话临时绑定为 Cookie 失效告警目标
+- **Cookie 定时检测**：新增 `cookie_status_check_interval`、`cookie_status_notify_targets`、`cookie_status_alert_cooldown` 配置，支持定时检测 Cookie 失效并主动告警
+
+### 变更
+- 文档和配置提示从“账号密码已弃用”调整为“实验性自动登录”。如果登录页要求 hCaptcha 等人机验证，仍会降级为匿名访问，并建议改用 `linuxdo_session_cookie`
+- README 增加云端 / 无 GUI 部署推荐流程，明确 `/linuxdo_login` 仅适合有桌面 GUI 的运行环境
+- README 增加云端可视化浏览器项目建议和 Cookie 定时检测启用步骤
+- 定时检测发现 Cookie 失效时，如果配置了远程浏览器 CDP，会先尝试自动重新拉取 Cookie，失败后再发送告警
+
 ## [1.2.1] - 2026-06-16
 
 ### 修复

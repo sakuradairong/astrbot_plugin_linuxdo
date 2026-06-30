@@ -1,2 +1,3 @@
 scrapling[fetchers]>=0.4
 lxml>=5.0
+playwright>=1.40

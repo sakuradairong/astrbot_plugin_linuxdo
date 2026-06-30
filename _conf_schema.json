@@ -36,15 +36,45 @@
     "hint": "登录 linux.do → F12 → Application → Cookies → linux.do → 复制 _t（推荐，长效约 1 年）或 _forum_session（短期）的 Value 粘贴到这里。也支持完整 Cookie 头格式如『_t=xxx; _forum_session=yyy』。留空则匿名访问（无法读取需登录才能看的主题）。"
   },
   "linuxdo_username": {
-    "description": "LinuxDo 用户名（已弃用）",
+    "description": "LinuxDo 用户名（实验性自动登录）",
     "type": "string",
     "default": "",
-    "hint": "⚠️ linux.do 登录启用了 hCaptcha 人机验证，账号密码自动登录已不可用（保留此项仅为兼容）。请改用上方 linuxdo_session_cookie。"
+    "hint": "可与 linuxdo_password 配合尝试表单自动登录。若 linux.do 要求人机验证，自动登录会失败并降级为匿名访问；访问受限内容仍推荐填写 linuxdo_session_cookie。"
   },
   "linuxdo_password": {
-    "description": "LinuxDo 密码（已弃用）",
+    "description": "LinuxDo 密码（实验性自动登录）",
     "type": "string",
     "default": "",
-    "hint": "⚠️ 配合 linuxdo_username 的自动登录已因 hCaptcha 失效。请改用 linuxdo_session_cookie（浏览器复制 _t）。"
+    "hint": "配合 linuxdo_username 尝试表单自动登录。密码仅用于当前插件运行时登录流程；若遇到 hCaptcha，请改用 linuxdo_session_cookie（浏览器复制 _t）。"
+  },
+  "interactive_login_timeout": {
+    "description": "手动登录窗口等待时间（秒）",
+    "type": "int",
+    "default": 180,
+    "hint": "执行 /linuxdo_login 后，插件等待你在可见浏览器窗口中完成 hCaptcha 和登录的最长时间。仅适用于运行 AstrBot 的机器有桌面 GUI 的场景；云服务器推荐填写 linuxdo_session_cookie 或用 /linuxdo_cookie 临时导入。"
+  },
+  "remote_browser_cdp_endpoint": {
+    "description": "远程可视浏览器 CDP 地址",
+    "type": "string",
+    "default": "",
+    "hint": "可选。填写同一 Docker 网络内可访问的 Chrome DevTools Protocol 端点，例如 http://chromium:9222。管理员在该可视浏览器里登录 linux.do 后，可执行 /linuxdo_cookie_pull 自动读取并验证 Cookie。请勿把 CDP 端口暴露到公网。"
+  },
+  "cookie_status_check_interval": {
+    "description": "Cookie 状态定时检测间隔（秒）",
+    "type": "int",
+    "default": 3600,
+    "hint": "Cookie 定时检测间隔，默认 3600 秒（每小时）。检测失败时会向 cookie_status_notify_targets 或 /linuxdo_cookie_watch 绑定的会话发送告警。设为 0 可关闭。"
+  },
+  "cookie_status_notify_targets": {
+    "description": "Cookie 状态告警目标",
+    "type": "string",
+    "default": "",
+    "hint": "主动发送 Cookie 失效告警的 AstrBot 会话 ID，多个目标可用英文逗号、分号或换行分隔。可先在目标会话执行 /linuxdo_cookie_status 查看当前会话 ID，或用 /linuxdo_cookie_watch 临时绑定。"
+  },
+  "cookie_status_alert_cooldown": {
+    "description": "Cookie 失效重复告警冷却（秒）",
+    "type": "int",
+    "default": 21600,
+    "hint": "Cookie 持续不可用时，重复发送告警的最短间隔。默认 21600 秒（6 小时），最低按 300 秒处理。"
   }
 }

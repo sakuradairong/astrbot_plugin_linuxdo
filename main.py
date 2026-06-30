@@ -8,6 +8,7 @@ astrbot_plugin_linuxdo - LinuxDo 链接检测 & 预览截图插件
 
 import re
 import asyncio
+import inspect
 import time
 import hashlib
 from pathlib import Path
@@ -58,8 +59,21 @@ class LinuxDoPreviewPlugin(Star):
         # 登录状态：跨 fetch 复用在同一 StealthySession 中
         self._auth_check_done = False
         self._logged_in = False
+        self._runtime_cookie_value = ""
+        self._remote_cookie_pull_done = False
+        self._status_task = None
+        self._runtime_notify_targets: set[str] = set()
+        self._last_cookie_status_ok = None
+        self._last_cookie_alert_at = 0.0
+        self._start_status_task()
 
     async def terminate(self):
+        if self._status_task:
+            self._status_task.cancel()
+            try:
+                await self._status_task
+            except asyncio.CancelledError:
+                pass
         _EXECUTOR.shutdown(wait=False)
         logger.info("[LinuxDoPreview] 插件已卸载")
 
@@ -67,6 +81,7 @@ class LinuxDoPreviewPlugin(Star):
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_message(self, event: AstrMessageEvent):
+        self._start_status_task()
         text = event.message_str
         if not text:
             return
@@ -447,6 +462,11 @@ class LinuxDoPreviewPlugin(Star):
         p = self.config.get("linuxdo_password", "") or ""
         return bool(u.strip() and p.strip())
 
+    def _has_remote_browser(self) -> bool:
+        """检查是否配置了远程可视浏览器 CDP 端点"""
+        endpoint = self.config.get("remote_browser_cdp_endpoint", "") or ""
+        return bool(endpoint.strip())
+
     _COOKIE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
     # linux.do / Discourse / Cloudflare 可能出现的 cookie 名
     _KNOWN_COOKIE_NAMES = {
@@ -550,6 +570,535 @@ class LinuxDoPreviewPlugin(Star):
         except Exception:
             return False
 
+    def _capture_context_cookies(self, session) -> str:
+        """从当前浏览器上下文提取 linux.do 相关 cookie，序列化为 Cookie 头。"""
+        ctx = session.context
+        if not ctx:
+            return ""
+        try:
+            cookies = ctx.cookies(["https://linux.do"])
+        except Exception as e:
+            logger.info(f"[LinuxDoPreview] 读取登录 Cookie 失败: {type(e).__name__}: {e}")
+            return ""
+
+        pairs = []
+        for cookie in cookies:
+            name = cookie.get("name", "")
+            value = cookie.get("value", "")
+            domain = cookie.get("domain", "")
+            if not name or not value:
+                continue
+            if "linux.do" not in domain:
+                continue
+            pairs.append(f"{name}={value}")
+        return "; ".join(pairs)
+
+    @staticmethod
+    def _selector_exists(page, selectors: list[str]) -> bool:
+        for selector in selectors:
+            try:
+                if page.locator(selector).count() > 0:
+                    return True
+            except Exception:
+                continue
+        return False
+
+    @staticmethod
+    def _fill_first(page, selectors: list[str], value: str) -> bool:
+        for selector in selectors:
+            try:
+                locator = page.locator(selector)
+                if locator.count() <= 0:
+                    continue
+                locator.first.fill(value)
+                return True
+            except Exception:
+                continue
+        return False
+
+    @staticmethod
+    def _click_first(page, selectors: list[str]) -> bool:
+        for selector in selectors:
+            try:
+                locator = page.locator(selector)
+                if locator.count() <= 0:
+                    continue
+                locator.first.click()
+                return True
+            except Exception:
+                continue
+        return False
+
+    def _auto_login_and_capture(self, session) -> bool:
+        """尝试使用用户名/密码登录 linux.do，并缓存登录后的 cookie。
+
+        linux.do 当前可能启用 hCaptcha。该方法只做 best-effort 表单登录：
+        成功则把上下文 cookie 缓存在内存中，失败则保持匿名访问。
+        """
+        username = (self.config.get("linuxdo_username", "") or "").strip()
+        password = (self.config.get("linuxdo_password", "") or "").strip()
+        if not username or not password:
+            return False
+
+        ctx = session.context
+        if not ctx:
+            return False
+
+        timeout_ms = max(self.config.get("screenshot_timeout", 15) * 1000, 30000)
+        page = None
+        captcha_selectors = [
+            "iframe[src*='hcaptcha']",
+            "iframe[src*='captcha']",
+            ".h-captcha",
+            "[data-sitekey]",
+            ".cf-turnstile",
+            "iframe[src*='turnstile']",
+        ]
+        username_selectors = [
+            "#login-account-name",
+            "input[name='login']",
+            "input[name='username']",
+            "input[name='email']",
+            "input[type='email']",
+            "input[autocomplete='username']",
+        ]
+        password_selectors = [
+            "#login-account-password",
+            "input[name='password']",
+            "input[type='password']",
+            "input[autocomplete='current-password']",
+        ]
+        submit_selectors = [
+            "#login-button",
+            "button#login-button",
+            "button[type='submit']",
+            "button:has-text('登录')",
+            "button:has-text('Log In')",
+            "button:has-text('Login')",
+            ".btn-primary",
+        ]
+
+        try:
+            page = ctx.new_page()
+            page.set_viewport_size({"width": 1280, "height": 900})
+            page.goto("https://linux.do/login", wait_until="domcontentloaded", timeout=timeout_ms)
+            page.wait_for_timeout(1000)
+
+            if self._check_login_state(session):
+                cookie_value = self._capture_context_cookies(session)
+                if cookie_value:
+                    self._runtime_cookie_value = cookie_value
+                logger.info("[LinuxDoPreview] 当前会话已处于登录状态")
+                return True
+
+            has_user = self._fill_first(page, username_selectors, username)
+            has_pass = self._fill_first(page, password_selectors, password)
+            if not (has_user and has_pass):
+                logger.warning("[LinuxDoPreview] 未找到 linux.do 登录表单，账号登录失败")
+                return False
+
+            if self._selector_exists(page, captcha_selectors):
+                logger.warning(
+                    "[LinuxDoPreview] 检测到登录验证码，仍尝试提交；"
+                    "若站点要求人工验证，本次会降级为匿名访问。"
+                )
+
+            clicked = self._click_first(page, submit_selectors)
+            if not clicked:
+                try:
+                    page.keyboard.press("Enter")
+                except Exception:
+                    pass
+
+            try:
+                page.wait_for_load_state("networkidle", timeout=timeout_ms)
+            except Exception:
+                page.wait_for_timeout(3000)
+
+            for _ in range(5):
+                if self._check_login_state(session):
+                    cookie_value = self._capture_context_cookies(session)
+                    if not cookie_value:
+                        logger.warning("[LinuxDoPreview] 登录成功但未能提取 Cookie")
+                        return False
+                    self._runtime_cookie_value = cookie_value
+                    logger.info("[LinuxDoPreview] 账号登录成功，已缓存会话 Cookie")
+                    return True
+                if self._selector_exists(page, captcha_selectors):
+                    logger.warning(
+                        "[LinuxDoPreview] 账号登录被验证码阻止，"
+                        "请改用 linuxdo_session_cookie。"
+                    )
+                    return False
+                page.wait_for_timeout(1500)
+
+            logger.warning("[LinuxDoPreview] 账号登录未通过验证，将匿名访问")
+            return False
+        except Exception as e:
+            logger.warning(f"[LinuxDoPreview] 账号登录失败: {type(e).__name__}: {e}")
+            return False
+        finally:
+            if page:
+                try:
+                    page.close()
+                except Exception:
+                    pass
+
+    def _interactive_login_and_capture(self) -> bool:
+        """打开可见浏览器，等待用户手动完成 hCaptcha 和登录。"""
+        if not SCRAPLING_AVAILABLE:
+            raise RuntimeError("Scrapling 未安装")
+
+        username = (self.config.get("linuxdo_username", "") or "").strip()
+        password = (self.config.get("linuxdo_password", "") or "").strip()
+        timeout_s = max(int(self.config.get("interactive_login_timeout", 180)), 30)
+        deadline = time.time() + timeout_s
+
+        with _StealthySession(  # type: ignore[union-attr]
+            headless=False, solve_cloudflare=True
+        ) as session:
+            ctx = session.context
+            if not ctx:
+                return False
+
+            page = None
+            try:
+                page = ctx.new_page()
+                page.set_viewport_size({"width": 1280, "height": 900})
+                page.goto(
+                    "https://linux.do/login",
+                    wait_until="domcontentloaded",
+                    timeout=30000,
+                )
+                page.wait_for_timeout(1000)
+
+                if username:
+                    self._fill_first(page, [
+                        "#login-account-name",
+                        "input[name='login']",
+                        "input[name='username']",
+                        "input[name='email']",
+                        "input[type='email']",
+                        "input[autocomplete='username']",
+                    ], username)
+                if password:
+                    self._fill_first(page, [
+                        "#login-account-password",
+                        "input[name='password']",
+                        "input[type='password']",
+                        "input[autocomplete='current-password']",
+                    ], password)
+
+                logger.info(
+                    f"[LinuxDoPreview] 已打开可见登录窗口，等待用户完成登录（{timeout_s}s）"
+                )
+                while time.time() < deadline:
+                    if self._check_login_state(session):
+                        cookie_value = self._capture_context_cookies(session)
+                        if not cookie_value:
+                            logger.warning("[LinuxDoPreview] 手动登录成功但未能提取 Cookie")
+                            return False
+                        self._runtime_cookie_value = cookie_value
+                        self._auth_check_done = True
+                        self._logged_in = True
+                        logger.info("[LinuxDoPreview] 手动登录成功，已缓存会话 Cookie")
+                        return True
+                    page.wait_for_timeout(1500)
+
+                logger.warning("[LinuxDoPreview] 手动登录等待超时")
+                return False
+            except Exception as e:
+                logger.warning(f"[LinuxDoPreview] 手动登录失败: {type(e).__name__}: {e}")
+                return False
+            finally:
+                if page:
+                    try:
+                        page.close()
+                    except Exception:
+                        pass
+
+    def _verify_and_cache_cookie(self, cookie_value: str) -> bool:
+        """验证用户导入的 Cookie，并缓存到当前插件进程内存。"""
+        cookie_value = (cookie_value or "").strip()
+        if not cookie_value:
+            return False
+        if not SCRAPLING_AVAILABLE:
+            raise RuntimeError("Scrapling 未安装")
+
+        with _StealthySession(  # type: ignore[union-attr]
+            headless=True, solve_cloudflare=True
+        ) as session:
+            if not self._inject_session_cookie(session, cookie_value):
+                return False
+            if not self._check_login_state(session):
+                return False
+            self._runtime_cookie_value = cookie_value
+            self._auth_check_done = True
+            self._logged_in = True
+            self._last_cookie_status_ok = True
+            self._last_cookie_alert_at = 0.0
+            logger.info("[LinuxDoPreview] 运行时 Cookie 验证成功，已缓存到内存")
+            return True
+
+    def _pull_cookie_from_remote_browser(self) -> dict:
+        """通过 Chrome DevTools Protocol 从远程可视浏览器读取 linux.do Cookie。"""
+        endpoint = (self.config.get("remote_browser_cdp_endpoint", "") or "").strip()
+        if not endpoint:
+            return {
+                "ok": False,
+                "message": "未配置 remote_browser_cdp_endpoint",
+                "cookie": "",
+            }
+
+        try:
+            from playwright.sync_api import sync_playwright  # type: ignore
+        except Exception as e:
+            return {
+                "ok": False,
+                "message": f"Playwright 不可用: {type(e).__name__}: {e}",
+                "cookie": "",
+            }
+
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.connect_over_cdp(endpoint)
+                contexts = browser.contexts
+                if not contexts:
+                    return {
+                        "ok": False,
+                        "message": "远程浏览器没有可读取的上下文",
+                        "cookie": "",
+                    }
+
+                best_cookies = []
+                for ctx in contexts:
+                    cookies = ctx.cookies(["https://linux.do"])
+                    if any(c.get("name") == "_t" for c in cookies):
+                        best_cookies = cookies
+                        break
+                    if cookies and not best_cookies:
+                        best_cookies = cookies
+
+                if not best_cookies:
+                    return {
+                        "ok": False,
+                        "message": "远程浏览器中未找到 linux.do Cookie，请先在可视浏览器里登录",
+                        "cookie": "",
+                    }
+
+                pairs = []
+                for cookie in best_cookies:
+                    name = cookie.get("name", "")
+                    value = cookie.get("value", "")
+                    domain = cookie.get("domain", "")
+                    if not name or not value:
+                        continue
+                    if "linux.do" not in domain:
+                        continue
+                    pairs.append(f"{name}={value}")
+
+                cookie_value = "; ".join(pairs)
+                if not cookie_value:
+                    return {
+                        "ok": False,
+                        "message": "远程浏览器 Cookie 为空",
+                        "cookie": "",
+                    }
+
+                return {
+                    "ok": True,
+                    "message": f"已从远程浏览器读取 {len(pairs)} 个 linux.do Cookie",
+                    "cookie": cookie_value,
+                }
+        except Exception as e:
+            return {
+                "ok": False,
+                "message": f"连接远程浏览器失败: {type(e).__name__}: {e}",
+                "cookie": "",
+            }
+
+    def _pull_verify_and_cache_remote_cookie(self) -> dict:
+        result = self._pull_cookie_from_remote_browser()
+        if not result.get("ok"):
+            return result
+
+        cookie_value = result.get("cookie", "")
+        if not self._verify_and_cache_cookie(cookie_value):
+            return {
+                "ok": False,
+                "message": "已读取远程浏览器 Cookie，但验证未通过",
+                "cookie": "",
+            }
+        return {
+            "ok": True,
+            "message": result.get("message", "Cookie 已读取并验证成功"),
+            "cookie": "",
+        }
+
+    def _get_active_cookie_value(self) -> tuple[str, str]:
+        config_cookie = (self.config.get("linuxdo_session_cookie", "") or "").strip()
+        if config_cookie:
+            return config_cookie, "配置 linuxdo_session_cookie"
+        if self._runtime_cookie_value:
+            return self._runtime_cookie_value, "运行时导入 Cookie"
+        return "", "未配置"
+
+    def _check_cookie_status(self) -> dict:
+        """检查当前可用 Cookie 是否仍处于登录状态。"""
+        cookie_value, source = self._get_active_cookie_value()
+        if not cookie_value:
+            return {
+                "ok": False,
+                "source": source,
+                "message": "未配置 LinuxDo Cookie",
+            }
+        if not SCRAPLING_AVAILABLE:
+            return {
+                "ok": False,
+                "source": source,
+                "message": "Scrapling 未安装，无法验证 Cookie",
+            }
+
+        try:
+            with _StealthySession(  # type: ignore[union-attr]
+                headless=True, solve_cloudflare=True
+            ) as session:
+                if not self._inject_session_cookie(session, cookie_value):
+                    return {
+                        "ok": False,
+                        "source": source,
+                        "message": "Cookie 注入失败",
+                    }
+                ok = self._check_login_state(session)
+                if ok:
+                    self._auth_check_done = True
+                    self._logged_in = True
+                    return {
+                        "ok": True,
+                        "source": source,
+                        "message": "Cookie 有效，LinuxDo 当前为已登录状态",
+                    }
+                self._logged_in = False
+                return {
+                    "ok": False,
+                    "source": source,
+                    "message": "Cookie 无效或已过期，LinuxDo 当前未登录",
+                }
+        except Exception as e:
+            self._logged_in = False
+            return {
+                "ok": False,
+                "source": source,
+                "message": f"Cookie 检测失败: {type(e).__name__}: {e}",
+            }
+
+    def _get_status_notify_targets(self) -> list[str]:
+        raw = (self.config.get("cookie_status_notify_targets", "") or "").strip()
+        targets = set(self._runtime_notify_targets)
+        if raw:
+            for item in re.split(r"[\n,;]+", raw):
+                item = item.strip()
+                if item:
+                    targets.add(item)
+        return sorted(targets)
+
+    def _start_status_task(self):
+        interval = int(self.config.get("cookie_status_check_interval", 3600) or 0)
+        if interval <= 0 or self._status_task:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._status_task = loop.create_task(self._cookie_status_loop())
+
+    async def _cookie_status_loop(self):
+        while True:
+            raw_interval = int(self.config.get("cookie_status_check_interval", 3600) or 0)
+            if raw_interval <= 0:
+                await asyncio.sleep(60)
+                continue
+            interval = max(raw_interval, 60)
+            await asyncio.sleep(interval)
+
+            targets = self._get_status_notify_targets()
+            if not targets:
+                continue
+
+            status = await asyncio \
+                .get_event_loop() \
+                .run_in_executor(_EXECUTOR, self._check_cookie_status)
+
+            if not status.get("ok") and self._has_remote_browser():
+                pulled = await asyncio \
+                    .get_event_loop() \
+                    .run_in_executor(_EXECUTOR, self._pull_verify_and_cache_remote_cookie)
+                if pulled.get("ok"):
+                    status = {
+                        "ok": True,
+                        "source": "远程可视浏览器",
+                        "message": "Cookie 失效后已从远程可视浏览器自动刷新",
+                    }
+
+            ok = bool(status.get("ok"))
+            now = time.time()
+            cooldown = max(
+                int(self.config.get("cookie_status_alert_cooldown", 21600) or 21600),
+                300,
+            )
+            should_alert = (
+                not ok
+                and (
+                    self._last_cookie_status_ok is not False
+                    or now - self._last_cookie_alert_at >= cooldown
+                )
+            )
+            self._last_cookie_status_ok = ok
+            if not should_alert:
+                continue
+
+            self._last_cookie_alert_at = now
+            message = (
+                "⚠️ LinuxDo Cookie 状态异常\n"
+                f"来源: {status.get('source', '未知')}\n"
+                f"状态: {status.get('message', '未知错误')}\n"
+                "请更新 linuxdo_session_cookie，或使用 /linuxdo_cookie 临时导入新的 _t。"
+            )
+            for target in targets:
+                sent = await self._send_plain_message(target, message)
+                if not sent:
+                    logger.warning(
+                        f"[LinuxDoPreview] Cookie 状态告警发送失败，target={target}"
+                    )
+
+    async def _send_plain_message(self, target: str, text: str) -> bool:
+        """兼容不同 AstrBot 版本的主动发消息接口。"""
+        sender = getattr(self.context, "send_message", None)
+        if not sender:
+            return False
+
+        candidates = [text]
+        try:
+            from astrbot.api.message_components import Plain  # type: ignore
+            candidates.append([Plain(text)])
+        except Exception:
+            pass
+
+        for payload in candidates:
+            try:
+                result = sender(target, payload)
+                if inspect.isawaitable(result):
+                    await result
+                return True
+            except TypeError:
+                continue
+            except Exception as e:
+                logger.warning(
+                    f"[LinuxDoPreview] 主动发送消息失败: {type(e).__name__}: {e}"
+                )
+                return False
+        return False
+
     def _ensure_authenticated(self, session) -> bool:
         """在已绕过 CF 的上下文中按需认证。
 
@@ -559,9 +1108,9 @@ class LinuxDoPreviewPlugin(Star):
 
         逻辑：
         1) 配置了 linuxdo_session_cookie → 每次注入；首次校验后缓存结果
-        2) 仅配置了用户名/密码 → linux.do 登录受 hCaptcha 保护，无法自动登录，
-           仅提示一次并降级为匿名访问
-        3) 都没配置 → 匿名访问
+        2) 账号密码登录成功后 → 后续请求注入内存缓存的登录 Cookie
+        3) 仅配置了用户名/密码 → 尝试表单登录一次，失败则匿名访问
+        4) 都没配置 → 匿名访问
         """
         # ── 手动 Cookie：每次请求都注入（上下文是新建的） ──
         if self._has_session_cookie():
@@ -583,14 +1132,33 @@ class LinuxDoPreviewPlugin(Star):
                     )
             return self._logged_in
 
-        # ── 仅用户名/密码：受 hCaptcha 限制，无法自动登录（仅提示一次） ──
+        # ── 账号密码登录成功后：每次请求都复用内存里的 Cookie ──
+        if self._runtime_cookie_value:
+            if self._inject_session_cookie(session, self._runtime_cookie_value):
+                return self._logged_in
+
+        # ── 远程可视浏览器：管理员已在浏览器里登录时，自动拉取 Cookie ──
+        if self._has_remote_browser() and not self._remote_cookie_pull_done:
+            self._remote_cookie_pull_done = True
+            pulled = self._pull_verify_and_cache_remote_cookie()
+            if pulled.get("ok") and self._runtime_cookie_value:
+                if self._inject_session_cookie(session, self._runtime_cookie_value):
+                    self._logged_in = True
+                    return True
+            logger.info(
+                f"[LinuxDoPreview] 远程浏览器 Cookie 拉取未成功: "
+                f"{pulled.get('message', '未知错误')}"
+            )
+
+        # ── 仅用户名/密码：尝试一次表单登录，遇到验证码则降级匿名 ──
         if self._has_auto_login() and not self._auth_check_done:
             self._auth_check_done = True
+            self._logged_in = self._auto_login_and_capture(session)
+            if self._logged_in:
+                return True
             logger.warning(
-                "[LinuxDoPreview] linux.do 登录启用了 hCaptcha 人机验证，账号密码"
-                "自动登录不可用。请在浏览器登录 linux.do 后，F12 → Application → "
-                "Cookies → 复制 _t（推荐，长效）或 _forum_session 的值，填入 "
-                "linuxdo_session_cookie 配置项。本次降级为匿名访问。"
+                "[LinuxDoPreview] 账号密码登录未成功，将匿名访问。"
+                "如果 linux.do 要求人机验证，请改用 linuxdo_session_cookie。"
             )
 
         # 都没配置 / 自动登录不可用 → 匿名
@@ -1155,6 +1723,7 @@ class LinuxDoPreviewPlugin(Star):
 
     @filter.command("linuxdo_stats")
     async def show_stats(self, event: AstrMessageEvent):
+        self._start_status_task()
         screenshots = list(self.screenshot_dir.glob("*.png"))
         cache_size = sum(f.stat().st_size for f in screenshots) / 1024
         yield event.plain_result(
@@ -1164,6 +1733,138 @@ class LinuxDoPreviewPlugin(Star):
             f"  错误次数: {self._stats['error']}\n"
             f"  缓存截图: {len(screenshots)} ({cache_size:.1f} KB)"
         )
+
+    @filter.command("linuxdo_cookie_status")
+    async def cookie_status(self, event: AstrMessageEvent):
+        self._start_status_task()
+        yield event.plain_result("🔐 正在检测 LinuxDo Cookie 状态…")
+        try:
+            status = await asyncio \
+                .get_event_loop() \
+                .run_in_executor(_EXECUTOR, self._check_cookie_status)
+            icon = "✅" if status.get("ok") else "⚠️"
+            targets = self._get_status_notify_targets()
+            current_origin = getattr(event, "unified_msg_origin", "") or ""
+            extra = ""
+            if current_origin:
+                extra = f"\n当前会话 ID: {current_origin}"
+            yield event.plain_result(
+                f"{icon} LinuxDo Cookie 状态\n"
+                f"来源: {status.get('source', '未知')}\n"
+                f"状态: {status.get('message', '未知')}\n"
+                f"定时通知目标数: {len(targets)}"
+                f"{extra}"
+            )
+        except Exception as e:
+            logger.error(f"[LinuxDoPreview] Cookie 状态检测失败: {type(e).__name__}: {e}")
+            yield event.plain_result(f"❌ Cookie 状态检测失败: {str(e)[:200]}")
+
+    @filter.command("linuxdo_cookie_watch")
+    async def watch_cookie_status(self, event: AstrMessageEvent):
+        self._start_status_task()
+        origin = getattr(event, "unified_msg_origin", "") or ""
+        if not origin:
+            yield event.plain_result(
+                "⚠️ 无法读取当前会话 ID。请在配置项 cookie_status_notify_targets "
+                "中手动填写通知目标。"
+            )
+            return
+        self._runtime_notify_targets.add(origin)
+        yield event.plain_result(
+            "✅ 已将当前会话加入 LinuxDo Cookie 状态告警目标。\n"
+            "这是运行时设置，插件重载或 AstrBot 重启后失效；长期使用请写入 "
+            "cookie_status_notify_targets 配置。"
+        )
+
+    @filter.command("linuxdo_login")
+    async def interactive_login(self, event: AstrMessageEvent):
+        self._start_status_task()
+        timeout_s = max(int(self.config.get("interactive_login_timeout", 180)), 30)
+        yield event.plain_result(
+            f"🔐 正在打开 linux.do 登录窗口，请在 {timeout_s} 秒内手动完成 hCaptcha 和登录…\n"
+            "窗口会出现在运行 AstrBot 的那台机器上。"
+        )
+        try:
+            ok = await asyncio \
+                .get_event_loop() \
+                .run_in_executor(_EXECUTOR, self._interactive_login_and_capture)
+            if ok:
+                yield event.plain_result("✅ LinuxDo 手动登录成功，已缓存会话 Cookie。")
+            else:
+                yield event.plain_result(
+                    "⚠️ LinuxDo 手动登录未成功或已超时。"
+                    "如果窗口没有弹出，请确认 AstrBot 运行环境支持桌面 GUI。"
+                )
+        except Exception as e:
+            logger.error(f"[LinuxDoPreview] 手动登录命令失败: {type(e).__name__}: {e}")
+            yield event.plain_result(f"❌ 手动登录失败: {str(e)[:200]}")
+
+    @filter.command("linuxdo_cookie")
+    async def import_cookie(self, event: AstrMessageEvent):
+        self._start_status_task()
+        message = event.message_str or ""
+        cookie_value = re.sub(
+            r"^\s*/?linuxdo_cookie(?:\s+)?",
+            "",
+            message,
+            count=1,
+            flags=re.IGNORECASE,
+        ).strip()
+        if not cookie_value or cookie_value == message.strip():
+            yield event.plain_result(
+                "用法：/linuxdo_cookie _t=你的值\n"
+                "也支持完整 Cookie 头。请只在私聊或可信管理渠道使用；"
+                "该 Cookie 只缓存在内存，重启或重载后失效。"
+            )
+            return
+
+        yield event.plain_result("🔐 正在验证 LinuxDo Cookie…")
+        try:
+            ok = await asyncio \
+                .get_event_loop() \
+                .run_in_executor(_EXECUTOR, self._verify_and_cache_cookie, cookie_value)
+            if ok:
+                yield event.plain_result(
+                    "✅ LinuxDo Cookie 验证成功，已缓存到当前插件进程内存。"
+                )
+            else:
+                yield event.plain_result(
+                    "⚠️ LinuxDo Cookie 验证失败。请确认复制的是登录后的 `_t` "
+                    "或完整 Cookie 头，且没有多余空格。"
+                )
+        except Exception as e:
+            logger.error(f"[LinuxDoPreview] Cookie 导入失败: {type(e).__name__}: {e}")
+            yield event.plain_result(f"❌ Cookie 导入失败: {str(e)[:200]}")
+
+    @filter.command("linuxdo_cookie_pull")
+    async def pull_cookie(self, event: AstrMessageEvent):
+        self._start_status_task()
+        endpoint = (self.config.get("remote_browser_cdp_endpoint", "") or "").strip()
+        if not endpoint:
+            yield event.plain_result(
+                "⚠️ 未配置 remote_browser_cdp_endpoint。\n"
+                "请先部署带 CDP 的可视浏览器，并把端点填入配置，"
+                "例如 http://chromium:9222。"
+            )
+            return
+
+        yield event.plain_result("🔐 正在从远程可视浏览器读取 LinuxDo Cookie…")
+        try:
+            result = await asyncio \
+                .get_event_loop() \
+                .run_in_executor(_EXECUTOR, self._pull_verify_and_cache_remote_cookie)
+            if result.get("ok"):
+                yield event.plain_result(
+                    f"✅ {result.get('message', 'Cookie 已读取并验证成功')}，"
+                    "已缓存到当前插件进程内存。"
+                )
+            else:
+                yield event.plain_result(
+                    f"⚠️ 远程浏览器 Cookie 获取失败: {result.get('message', '未知错误')}"
+                )
+        except Exception as e:
+            logger.error(f"[LinuxDoPreview] 远程 Cookie 拉取失败: {type(e).__name__}: {e}")
+            yield event.plain_result(f"❌ 远程 Cookie 拉取失败: {str(e)[:200]}")
 
     @filter.command("linuxdo_clean")
     async def clean_cache(self, event: AstrMessageEvent):
