@@ -5,6 +5,9 @@
 
 ## [未发布]
 
+### 变更
+- 重做自定义 HTML 预览卡片设计系统：新增 `DESIGN.md` 作为视觉规范，将卡片 CSS 抽为设计 token 驱动的独立模块，并用文本化指标区替代跨平台不稳定的 emoji 图标
+
 ### 安全
 - **自定义 HTML 预览改为白名单清洗**：渲染 Discourse cooked HTML 前移除脚本、事件属性、表单、iframe、SVG、外站媒体与 `javascript:` / `data:` / `file:` 等危险 URL，避免主题正文携带主动内容影响截图渲染上下文
 - **HTML 清洗失败时 fail-closed**：若清洗器异常，预览内容降级为纯文本，不再回退到原始 cooked HTML
