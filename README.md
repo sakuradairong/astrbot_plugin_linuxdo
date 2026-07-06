@@ -48,7 +48,7 @@ https://linux.do/t/topic/1378383
 ```
 
 插件自动：
-1. 回复 `🔍 正在获取 linux.do 预览…`
+1. 回复 `🔍 正在读取 linux.do 页面…`
 2. 后台使用 Scrapling 绕过 Cloudflare
 3. 发送 **截图 + 标题 + 内容摘要**
 
@@ -99,7 +99,7 @@ https://linux.do/t/topic/1378383
 | `cache_ttl` | 缓存有效期（秒），设为 0 关闭缓存 | 1800 |
 | `max_content_length` | 内容摘要最大长度（字符） | 400 |
 | `screenshot_timeout` | 截图超时（秒） | 15 |
-| `screenshot_full_page` | 全页截图模式（true=完整帖子，false=仅视口） | true |
+| `screenshot_full_page` | 页面截图回退模式（元素级卡片截图失败时才生效；true=全页回退，false=仅视口回退） | true |
 | `use_api_render` | 使用 API + 自定义 HTML 渲染（推荐） | true |
 | `linuxdo_session_cookie` | LinuxDo 会话 Cookie（推荐填 `_t`，访问受限内容必填） | （空） |
 | `linuxdo_username` | LinuxDo 用户名（已弃用，受 hCaptcha 限制无法自动登录） | （空） |
@@ -117,6 +117,13 @@ https://linux.do/t/topic/1378383
 4. 在 AstrBot WebUI 插件配置中粘贴到 `linuxdo_session_cookie`
 
 也支持一次粘贴完整 Cookie 头，例如：`_t=xxx; _forum_session=yyy`。
+
+**安全提示**：
+- Cookie 以明文形式保存在 AstrBot 配置中，请妥善保管配置文件，避免泄露。
+- 配置 Cookie 后，插件会用该账号读取聊天中触发的 linux.do 链接；如果 Bot 所在群聊不可信，可能把该账号可见的受限主题摘要/截图发送到群里。
+- 建议仅在可信会话中启用 Cookie，或使用专门的低权限 linux.do 账号作为 Bot Cookie 来源。
+- 建议仅复制必要的 `_t` 或 `_forum_session`，不要粘贴完整浏览器 Cookie（避免带入其他站点的追踪/广告 Cookie）。
+- 若怀疑 Cookie 泄露，请立即在浏览器中退出并重新登录 linux.do，旧的 `_t`/`_forum_session` 将失效。
 
 **有效期**：`_t` 约 1 年；`_forum_session` 约 2 周。过期后重新获取即可，无需重启。
 

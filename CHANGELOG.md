@@ -3,6 +3,23 @@
 本项目所有显著变更都记录在此文件中。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 安全
+- **自定义 HTML 预览改为白名单清洗**：渲染 Discourse cooked HTML 前移除脚本、事件属性、表单、iframe、SVG、外站媒体与 `javascript:` / `data:` / `file:` 等危险 URL，避免主题正文携带主动内容影响截图渲染上下文
+- **HTML 清洗失败时 fail-closed**：若清洗器异常，预览内容降级为纯文本，不再回退到原始 cooked HTML
+- **补充共享 Cookie 风险提示**：文档明确说明配置 Cookie 后，群聊中任意可触发插件的链接都会使用该账号读取 linux.do 内容，建议仅在可信会话或专用 Bot 中启用
+
+### 修复
+- 修复 `linux.do` 链接识别误接受相似域名的问题，仅处理真实 `linux.do` 域名
+- 修复 Discourse 主题 JSON URL 构造会受回复楼层、查询参数或 fragment 干扰的问题
+- 修复 lxml 提取为空时不会回退正则提取的问题
+- 修复 API 渲染生成无效/过小截图时不会自动回退页面截图的问题
+- 修正 `screenshot_full_page` 文档与配置提示，明确它只影响元素级卡片截图失败后的页面截图回退
+
+### 测试
+- 新增 URL 识别、截图回退、HTML 清洗、清洗异常降级、lightbox/meta 剥离与 JSON URL 构造回归测试
+
 ## [1.2.1] - 2026-06-16
 
 ### 修复

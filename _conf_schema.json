@@ -18,10 +18,10 @@
     "hint": "等待页面截图的最大秒数。"
   },
   "screenshot_full_page": {
-    "description": "全页截图模式",
+    "description": "页面截图回退模式",
     "type": "bool",
     "default": true,
-    "hint": "默认开启全页截图，关闭后仅截取视口可见区域。"
+    "hint": "仅在元素级卡片截图失败、回退到页面截图时生效；默认开启全页回退，关闭后回退截图仅截取视口可见区域。"
   },
   "use_api_render": {
     "description": "使用 API + 自定义 HTML 渲染",
@@ -33,7 +33,7 @@
     "description": "LinuxDo 会话 Cookie（访问受限主题必填）",
     "type": "string",
     "default": "",
-    "hint": "登录 linux.do → F12 → Application → Cookies → linux.do → 复制 _t（推荐，长效约 1 年）或 _forum_session（短期）的 Value 粘贴到这里。也支持完整 Cookie 头格式如『_t=xxx; _forum_session=yyy』。留空则匿名访问（无法读取需登录才能看的主题）。"
+    "hint": "登录 linux.do → F12 → Application → Cookies → linux.do → 复制 _t（推荐，长效约 1 年）或 _forum_session（短期）的 Value 粘贴到这里。也支持完整 Cookie 头格式如『_t=xxx; _forum_session=yyy』。留空则匿名访问。注意：配置后，聊天中触发的 linux.do 链接都会用该账号读取，可能把受限主题摘要/截图发送到群里；仅建议在可信会话或专用低权限账号中使用。"
   },
   "linuxdo_username": {
     "description": "LinuxDo 用户名（已弃用）",
