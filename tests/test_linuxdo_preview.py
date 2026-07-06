@@ -7,6 +7,8 @@ import unittest
 from unittest.mock import patch
 
 from linuxdo_preview.auth import _parse_cookie_pairs
+from linuxdo_preview.card_styles import PREVIEW_CARD_CSS
+from linuxdo_preview.html_card import _build_preview_html
 from linuxdo_preview.html_card import _normalize_cooked_urls
 from linuxdo_preview.utils import _format_count
 
@@ -165,6 +167,66 @@ class TestCookedUrlNormalization(unittest.TestCase):
         self.assertNotIn('javascript:', out.lower())
         self.assertNotIn('onclick', out.lower())
         self.assertNotIn('<img', out.lower())
+
+
+class TestPreviewCardRendering(unittest.TestCase):
+    def test_card_uses_design_system_structure(self):
+        html = _build_preview_html(
+            {
+                "title": "Plain title",
+                "fancy_title": "Fancy <Title>",
+                "posts_count": 12,
+                "views": 3456,
+                "like_count": 78,
+                "tags": ["dev", {"name": "python"}],
+                "post_stream": {
+                    "posts": [
+                        {
+                            "name": "Ada",
+                            "username": "ada",
+                            "created_at": "2026-07-06T12:34:56Z",
+                            "avatar_template": "/user_avatar/linux.do/ada/{size}/1.png",
+                            "cooked": "<p>Hello <a href=\"https://linux.do/t/topic/1\">world</a></p>",
+                        }
+                    ]
+                },
+            },
+            "https://linux.do/t/topic/1",
+        )
+
+        self.assertIn("LINUX.DO TOPIC", html)
+        self.assertIn('<div class="stats">', html)
+        self.assertIn('<span class="stat-label">Views</span>', html)
+        self.assertIn('<span class="stat-value">3.5k</span>', html)
+        self.assertIn('<span class="stat-label">Replies</span>', html)
+        self.assertIn('<span class="stat-label">Likes</span>', html)
+        self.assertIn('<span class="footer-label">Source</span>', html)
+        self.assertIn('#dev', html)
+        self.assertIn('#python', html)
+        self.assertIn('Fancy &lt;Title&gt;', html)
+        self.assertIn('src="https://linux.do/user_avatar/linux.do/ada/120/1.png"', html)
+
+    def test_card_avoids_emoji_iconography(self):
+        html = _build_preview_html(
+            {
+                "title": "Topic",
+                "posts_count": 1,
+                "views": 2,
+                "like_count": 3,
+                "post_stream": {"posts": [{"username": "u", "cooked": "<p>x</p>"}]},
+            },
+            "https://linux.do/t/topic/2",
+        )
+
+        self.assertNotIn("👀", html)
+        self.assertNotIn("💬", html)
+        self.assertNotIn("❤", html)
+        self.assertNotIn("🔗", html)
+
+    def test_design_system_css_tokens_are_present(self):
+        self.assertIn("--color-accent: #1f6feb;", PREVIEW_CARD_CSS)
+        self.assertIn("--shadow-card:", PREVIEW_CARD_CSS)
+        self.assertIn(".card::before", PREVIEW_CARD_CSS)
 
 
 class TestFormatCount(unittest.TestCase):
