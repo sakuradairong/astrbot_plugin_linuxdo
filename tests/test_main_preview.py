@@ -1,4 +1,5 @@
 import asyncio
+import importlib
 from pathlib import Path
 import sys
 import tempfile
@@ -70,11 +71,45 @@ def _install_astrbot_stubs():
 
 _install_astrbot_stubs()
 
-from main import LinuxDoPreviewPlugin
-from main import _extract_linuxdo_urls
+_PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+_PLUGIN_PARENT = _PLUGIN_ROOT.parent
+if str(_PLUGIN_PARENT) not in sys.path:
+    sys.path.insert(0, str(_PLUGIN_PARENT))
+
+from astrbot_plugin_linuxdo.main import LinuxDoPreviewPlugin
+from astrbot_plugin_linuxdo.main import _extract_linuxdo_urls
 
 
 class TestMainUrlExtraction(unittest.TestCase):
+    def test_imports_as_plugin_package_from_plugins_parent(self):
+        root = Path(__file__).resolve().parents[1]
+        parent = root.parent
+        original_path = sys.path[:]
+        removed_modules = {}
+        module_names = [
+            "astrbot_plugin_linuxdo",
+            "astrbot_plugin_linuxdo.main",
+            "astrbot_plugin_linuxdo.linuxdo_preview",
+            "linuxdo_preview",
+        ]
+        for name in module_names:
+            if name in sys.modules:
+                removed_modules[name] = sys.modules.pop(name)
+
+        try:
+            sys.path = [str(parent)] + [
+                path for path in sys.path
+                if path not in {"", str(root), str(parent)}
+            ]
+            module = importlib.import_module("astrbot_plugin_linuxdo.main")
+        finally:
+            sys.path = original_path
+            for name in module_names:
+                sys.modules.pop(name, None)
+            sys.modules.update(removed_modules)
+
+        self.assertTrue(hasattr(module, "LinuxDoPreviewPlugin"))
+
     def test_accepts_linuxdo_and_real_subdomains(self):
         text = "see https://linux.do/t/a/1, and https://meta.linux.do/t/b/2)."
         self.assertEqual(

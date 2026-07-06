@@ -22,29 +22,29 @@ from astrbot.api.star import Context
 from astrbot.api.star import Star
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
-from linuxdo_preview import AuthState
-from linuxdo_preview import LinuxDoTopicData
-from linuxdo_preview import _build_preview_html
-from linuxdo_preview import _build_summary
-from linuxdo_preview import _check_login_state
-from linuxdo_preview import _clean_text
-from linuxdo_preview import _ensure_authenticated
-from linuxdo_preview import _extract_content
-from linuxdo_preview import _extract_content_from_json
-from linuxdo_preview import _extract_content_from_topic_data
-from linuxdo_preview import _extract_title
-from linuxdo_preview import _extract_via_lxml
-from linuxdo_preview import _extract_via_regex
-from linuxdo_preview import _fetch_topic_data
-from linuxdo_preview import _format_count
-from linuxdo_preview import _has_auto_login
-from linuxdo_preview import _has_session_cookie
-from linuxdo_preview import _inject_session_cookie
-from linuxdo_preview import _normalize_cooked_urls
-from linuxdo_preview import _parse_cookie_pairs
-from linuxdo_preview import _render_html_screenshot
-from linuxdo_preview import _safe_title
-from linuxdo_preview import _take_screenshot
+from .linuxdo_preview import AuthState
+from .linuxdo_preview import LinuxDoTopicData
+from .linuxdo_preview import _build_preview_html
+from .linuxdo_preview import _build_summary
+from .linuxdo_preview import _check_login_state
+from .linuxdo_preview import _clean_text
+from .linuxdo_preview import _ensure_authenticated
+from .linuxdo_preview import _extract_content
+from .linuxdo_preview import _extract_content_from_json
+from .linuxdo_preview import _extract_content_from_topic_data
+from .linuxdo_preview import _extract_title
+from .linuxdo_preview import _extract_via_lxml
+from .linuxdo_preview import _extract_via_regex
+from .linuxdo_preview import _fetch_topic_data
+from .linuxdo_preview import _format_count
+from .linuxdo_preview import _has_auto_login
+from .linuxdo_preview import _has_session_cookie
+from .linuxdo_preview import _inject_session_cookie
+from .linuxdo_preview import _normalize_cooked_urls
+from .linuxdo_preview import _parse_cookie_pairs
+from .linuxdo_preview import _render_html_screenshot
+from .linuxdo_preview import _safe_title
+from .linuxdo_preview import _take_screenshot
 
 try:
     from scrapling.fetchers import StealthySession as _StealthySession
