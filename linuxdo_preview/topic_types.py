@@ -26,6 +26,12 @@ class LinuxDoPostStream(TypedDict):
 class LinuxDoTopicData(TypedDict):
     title: NotRequired[str]
     fancy_title: NotRequired[str]
+    category_id: NotRequired[int | str | None]
+    category_name: NotRequired[str]
+    last_posted_at: NotRequired[str]
+    pinned: NotRequired[bool]
+    closed: NotRequired[bool]
+    archived: NotRequired[bool]
     posts_count: NotRequired[int | str | None]
     views: NotRequired[int | str | None]
     like_count: NotRequired[int | str | None]

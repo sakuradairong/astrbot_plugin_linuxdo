@@ -175,6 +175,11 @@ class TestPreviewCardRendering(unittest.TestCase):
             {
                 "title": "Plain title",
                 "fancy_title": "Fancy <Title>",
+                "category_name": "开发调优",
+                "last_posted_at": "2026-07-07T08:09:10Z",
+                "pinned": True,
+                "closed": True,
+                "archived": False,
                 "posts_count": 12,
                 "views": 3456,
                 "like_count": 78,
@@ -201,6 +206,12 @@ class TestPreviewCardRendering(unittest.TestCase):
         self.assertIn('<span class="stat-label">Replies</span>', html)
         self.assertIn('<span class="stat-label">Likes</span>', html)
         self.assertIn('<span class="footer-label">Source</span>', html)
+        self.assertIn('<div class="topic-meta">', html)
+        self.assertIn('Category: 开发调优', html)
+        self.assertIn('Last: 2026-07-07', html)
+        self.assertIn('Pinned', html)
+        self.assertIn('Closed', html)
+        self.assertNotIn('Archived', html)
         self.assertIn('#dev', html)
         self.assertIn('#python', html)
         self.assertIn('Fancy &lt;Title&gt;', html)

@@ -93,6 +93,17 @@ PREVIEW_CARD_CSS = """
   .stat-label { display: block; color: var(--color-muted); font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
   .stat-value { display: block; margin-top: 3px; color: var(--color-ink); font-size: 18px; font-weight: 800; line-height: 1.2; }
   .tags { padding: 18px 34px 0; display: flex; gap: 8px; flex-wrap: wrap; }
+  .topic-meta { padding: 18px 34px 0; display: flex; gap: 8px; flex-wrap: wrap; }
+  .meta-chip {
+    border: 1px solid var(--color-line);
+    border-radius: 999px;
+    background: #fff;
+    color: var(--color-muted);
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.4;
+  }
   .tag {
     border: 1px solid rgba(31, 111, 235, 0.14);
     border-radius: 999px;
@@ -140,7 +151,7 @@ PREVIEW_CARD_CSS = """
   @media (max-width: 560px) {
     body { padding: 20px; }
     .header, .content, .footer { padding-left: 22px; padding-right: 22px; }
-    .tags { padding-left: 22px; padding-right: 22px; }
+    .tags, .topic-meta { padding-left: 22px; padding-right: 22px; }
     .title { font-size: 23px; }
     .stat { padding: 13px 16px; }
   }

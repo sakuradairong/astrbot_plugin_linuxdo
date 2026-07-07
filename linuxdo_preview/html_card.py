@@ -16,6 +16,7 @@ def _build_preview_html(topic_data: LinuxDoTopicData, url: str) -> str:
     views = topic_data.get("views", 0)
     like_count = topic_data.get("like_count", 0)
     tags = topic_data.get("tags", []) or []
+    topic_meta_html = _topic_meta_html(topic_data)
 
     post_stream = topic_data.get("post_stream", {}) or {}
     posts = post_stream.get("posts", []) or []
@@ -74,6 +75,7 @@ def _build_preview_html(topic_data: LinuxDoTopicData, url: str) -> str:
 	      <div class="stat"><span class="stat-label">Replies</span><span class="stat-value">{posts_text}</span></div>
 	      <div class="stat"><span class="stat-label">Likes</span><span class="stat-value">{likes_text}</span></div>
 	    </div>
+	    {topic_meta_html}
 	    {('<div class="tags">' + tags_html + '</div>') if tags else ''}
 	    <div class="content">
 	      {cooked_html}
@@ -84,7 +86,37 @@ def _build_preview_html(topic_data: LinuxDoTopicData, url: str) -> str:
 	    </div>
 	  </div>
 </body>
-</html>"""
+	</html>"""
+
+
+def _topic_meta_html(topic_data: LinuxDoTopicData) -> str:
+    chips: list[str] = []
+    category_name = topic_data.get("category_name", "") or ""
+    category_id = topic_data.get("category_id")
+    if category_name:
+        chips.append("Category: " + html_mod.escape(category_name))
+    elif category_id is not None:
+        chips.append("Category: " + html_mod.escape(str(category_id)))
+
+    last_posted_at = topic_data.get("last_posted_at", "") or ""
+    if last_posted_at:
+        chips.append("Last: " + html_mod.escape(_date_text(last_posted_at)))
+
+    if topic_data.get("pinned"):
+        chips.append("Pinned")
+    if topic_data.get("closed"):
+        chips.append("Closed")
+    if topic_data.get("archived"):
+        chips.append("Archived")
+
+    if not chips:
+        return ""
+    chip_html = "".join(f'<span class="meta-chip">{chip}</span>' for chip in chips)
+    return f'<div class="topic-meta">{chip_html}</div>'
+
+
+def _date_text(value: str) -> str:
+    return value.split("T", 1)[0] if "T" in value else value
 
 
 def _tag_name(tag: str | LinuxDoTag) -> str:
