@@ -1,10 +1,13 @@
 from .auth import AuthState
+from .auth import _auth_status_text
 from .auth import _check_login_state
 from .auth import _ensure_authenticated
 from .auth import _has_auto_login
 from .auth import _has_session_cookie
 from .auth import _inject_session_cookie
 from .auth import _parse_cookie_pairs
+from .chat_scope import _is_allowed_chat
+from .chat_scope import _parse_group_id_list
 from .extract import _build_summary
 from .extract import _extract_content
 from .extract import _extract_content_from_json
@@ -25,6 +28,7 @@ from .utils import _format_count
 __all__ = [
     "AuthState",
     "LinuxDoTopicData",
+    "_auth_status_text",
     "_build_preview_html",
     "_build_summary",
     "_check_login_state",
@@ -41,8 +45,10 @@ __all__ = [
     "_has_auto_login",
     "_has_session_cookie",
     "_inject_session_cookie",
+    "_is_allowed_chat",
     "_normalize_cooked_urls",
     "_parse_cookie_pairs",
+    "_parse_group_id_list",
     "_render_html_screenshot",
     "_safe_title",
     "_take_screenshot",

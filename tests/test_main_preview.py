@@ -78,6 +78,7 @@ if str(_PLUGIN_PARENT) not in sys.path:
 
 from astrbot_plugin_linuxdo.main import LinuxDoPreviewPlugin
 from astrbot_plugin_linuxdo.main import _extract_linuxdo_urls
+from astrbot_plugin_linuxdo.linuxdo_preview import AuthState
 
 
 class TestMainUrlExtraction(unittest.TestCase):
@@ -144,6 +145,76 @@ class TestMainUserFacingErrors(unittest.TestCase):
         self.assertEqual(results[0], "🔍 正在读取 linux.do 页面…")
         self.assertEqual(results[1], "❌ 预览获取失败，请稍后重试")
         self.assertNotIn("secret", results[1])
+
+
+class TestGroupWhitelist(unittest.TestCase):
+    class _Event:
+        def __init__(self, group_id: str):
+            self.message_str = "https://linux.do/t/topic/123"
+            self.message_obj = types.SimpleNamespace(group_id=group_id)
+
+        def plain_result(self, text):
+            return text
+
+        def image_result(self, text):
+            return text
+
+    @staticmethod
+    def _plugin(config):
+        plugin = LinuxDoPreviewPlugin.__new__(LinuxDoPreviewPlugin)
+        plugin.config = config
+        plugin._stats = {"total": 0, "cache_hit": 0, "error": 0}
+        plugin._stats_lock = threading.Lock()
+        setattr(plugin, "_fetch_preview", lambda _url: (None, "summary"))
+        return plugin
+
+    def test_allows_whitelisted_group(self):
+        async def _collect():
+            plugin = self._plugin({"allowed_group_ids": "1001, 1002"})
+            return [item async for item in plugin.on_message(self._Event("1002"))]
+
+        self.assertEqual(asyncio.run(_collect()), ["🔍 正在读取 linux.do 页面…", "summary"])
+
+    def test_skips_non_whitelisted_group(self):
+        calls = []
+
+        async def _collect():
+            plugin = self._plugin({"allowed_group_ids": "1001"})
+            setattr(plugin, "_fetch_preview", lambda url: calls.append(url) or (None, "summary"))
+            return [item async for item in plugin.on_message(self._Event("2002"))]
+
+        self.assertEqual(asyncio.run(_collect()), [])
+        self.assertEqual(calls, [])
+
+    def test_empty_whitelist_allows_group_and_private(self):
+        async def _collect(group_id: str):
+            plugin = self._plugin({"allowed_group_ids": ""})
+            return [item async for item in plugin.on_message(self._Event(group_id))]
+
+        self.assertEqual(asyncio.run(_collect("3003")), ["🔍 正在读取 linux.do 页面…", "summary"])
+        self.assertEqual(asyncio.run(_collect("")), ["🔍 正在读取 linux.do 页面…", "summary"])
+
+
+class TestAuthHealthCommand(unittest.TestCase):
+    class _Event:
+        def plain_result(self, text):
+            return text
+
+    def test_reports_cookie_names_without_values(self):
+        async def _collect():
+            plugin = LinuxDoPreviewPlugin.__new__(LinuxDoPreviewPlugin)
+            plugin.config = {"linuxdo_session_cookie": "_t=secret_t; _forum_session=secret_session"}
+            plugin._auth_state = AuthState(auth_check_done=True, logged_in=True)
+            return [item async for item in plugin.show_auth(self._Event())]
+
+        results = asyncio.run(_collect())
+        self.assertEqual(len(results), 1)
+        self.assertIn("Cookie: 已配置", results[0])
+        self.assertIn("_t", results[0])
+        self.assertIn("_forum_session", results[0])
+        self.assertIn("登录状态: 已验证", results[0])
+        self.assertNotIn("secret_t", results[0])
+        self.assertNotIn("secret_session", results[0])
 
 
 class TestApiRenderFallback(unittest.TestCase):

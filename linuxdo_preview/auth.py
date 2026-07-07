@@ -51,6 +51,27 @@ def _parse_cookie_pairs(cookie_str: str) -> list[dict[str, str]]:
     return pairs
 
 
+def _auth_status_text(config, auth_state: AuthState) -> str:
+    cookie_value = (config.get("linuxdo_session_cookie", "") or "").strip()
+    cookie_pairs = _parse_cookie_pairs(cookie_value)
+    cookie_names = ", ".join(pair["name"] for pair in cookie_pairs) if cookie_pairs else "无"
+    if not cookie_pairs:
+        login_status = "匿名"
+    elif not auth_state.auth_check_done:
+        login_status = "未验证"
+    elif auth_state.logged_in:
+        login_status = "已验证"
+    else:
+        login_status = "无效或已过期"
+    return (
+        "🔐 LinuxDo Preview 认证状态\n"
+        f"  Cookie: {'已配置' if cookie_pairs else '未配置'}\n"
+        f"  Cookie 名称: {cookie_names}\n"
+        f"  登录状态: {login_status}\n"
+        "  提示: 若失效，请重新复制 linux.do 请求里的完整 Cookie 值"
+    )
+
+
 def _inject_session_cookie(session, config, logger, cookie_value: str = "") -> bool:
     if not cookie_value:
         cookie_value = (config.get("linuxdo_session_cookie", "") or "").strip()
@@ -113,7 +134,7 @@ def _ensure_authenticated(session, config, auth_state: AuthState, auth_lock, log
                 else:
                     logger.warning(
                         "[LinuxDoPreview] 会话 Cookie 无效或已过期，将匿名访问。"
-                        "请在浏览器重新获取 Cookie（推荐 _t，长效）后填入配置。"
+                        + "请在浏览器重新复制 linux.do 的完整 Cookie 请求头后填入配置。"
                     )
             return auth_state.logged_in
 
@@ -121,9 +142,9 @@ def _ensure_authenticated(session, config, auth_state: AuthState, auth_lock, log
             auth_state.auth_check_done = True
             logger.warning(
                 "[LinuxDoPreview] linux.do 登录启用了 hCaptcha 人机验证，账号密码"
-                "自动登录不可用。请在浏览器登录 linux.do 后，F12 → Application → "
-                "Cookies → 复制 _t（推荐，长效）或 _forum_session 的值，填入 "
-                "linuxdo_session_cookie 配置项。本次降级为匿名访问。"
+                + "自动登录不可用。请在浏览器登录 linux.do 后，F12 → Network → "
+                + "刷新页面 → 复制 linux.do 请求里的完整 Cookie 值，填入 "
+                + "linuxdo_session_cookie 配置项。本次降级为匿名访问。"
             )
 
         auth_state.logged_in = False

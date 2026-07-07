@@ -24,6 +24,7 @@ from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from .linuxdo_preview import AuthState
 from .linuxdo_preview import LinuxDoTopicData
+from .linuxdo_preview import _auth_status_text
 from .linuxdo_preview import _build_preview_html
 from .linuxdo_preview import _build_summary
 from .linuxdo_preview import _check_login_state
@@ -40,8 +41,8 @@ from .linuxdo_preview import _format_count
 from .linuxdo_preview import _has_auto_login
 from .linuxdo_preview import _has_session_cookie
 from .linuxdo_preview import _inject_session_cookie
+from .linuxdo_preview import _is_allowed_chat
 from .linuxdo_preview import _normalize_cooked_urls
-from .linuxdo_preview import _parse_cookie_pairs
 from .linuxdo_preview import _render_html_screenshot
 from .linuxdo_preview import _safe_title
 from .linuxdo_preview import _take_screenshot
@@ -88,7 +89,7 @@ class LinuxDoPreviewPlugin(Star):
         if not _scrapling_available:
             logger.warning(
                 "[LinuxDoPreview] scrapling 未安装！"
-                "执行: pip install scrapling[fetchers] && scrapling install && playwright install-deps chromium"
+                + "执行: pip install scrapling[fetchers] && scrapling install && playwright install-deps chromium"
             )
 
         self._stats = {"total": 0, "cache_hit": 0, "error": 0}
@@ -114,6 +115,9 @@ class LinuxDoPreviewPlugin(Star):
         logger.info(f"[LinuxDoPreview] 检测到链接: {target_url}")
 
         if self._should_skip(target_url):
+            return
+
+        if not _is_allowed_chat(event, getattr(self, "config", None)):
             return
 
         yield event.plain_result("🔍 正在读取 linux.do 页面…")
@@ -235,9 +239,6 @@ class LinuxDoPreviewPlugin(Star):
     def _has_auto_login(self) -> bool:
         return _has_auto_login(self.config)
 
-    def _parse_cookie_pairs(self, cookie_str: str) -> list[dict[str, str]]:
-        return _parse_cookie_pairs(cookie_str)
-
     def _inject_session_cookie(self, session, cookie_value: str = "") -> bool:
         return _inject_session_cookie(session, self.config, logger, cookie_value)
 
@@ -283,11 +284,15 @@ class LinuxDoPreviewPlugin(Star):
         cache_size = sum(f.stat().st_size for f in screenshots) / 1024
         yield event.plain_result(
             f"📊 LinuxDo Preview 统计\n"
-            f"  请求总数: {self._stats['total']}\n"
-            f"  缓存命中: {self._stats['cache_hit']}\n"
-            f"  错误次数: {self._stats['error']}\n"
-            f"  缓存截图: {len(screenshots)} ({cache_size:.1f} KB)"
+            + f"  请求总数: {self._stats['total']}\n"
+            + f"  缓存命中: {self._stats['cache_hit']}\n"
+            + f"  错误次数: {self._stats['error']}\n"
+            + f"  缓存截图: {len(screenshots)} ({cache_size:.1f} KB)"
         )
+
+    @filter.command("linuxdo_auth")
+    async def show_auth(self, event: AstrMessageEvent):
+        yield event.plain_result(_auth_status_text(self.config, self._auth_state))
 
     @filter.command("linuxdo_clean")
     async def clean_cache(self, event: AstrMessageEvent):
