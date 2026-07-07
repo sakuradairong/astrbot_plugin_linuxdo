@@ -61,6 +61,10 @@ The header contains a small uppercase `LINUX.DO TOPIC` eyebrow, the escaped fanc
 
 Stats are three compact metric cells for views, replies, and likes. Use text labels instead of emoji icons so the card is consistent across platforms and screenshot engines.
 
+### Topic Metadata
+
+Topic metadata chips sit below the stat bar and above tags. Use short text-only chips for category, last activity, and status flags such as pinned or closed.
+
 ### Tags
 
 Tags are rounded pills with an accent tint. Keep at most six tags from the renderer.
@@ -84,4 +88,5 @@ The screenshot renderer is static. Do not add animation. Hover/focus states are 
 - Maintain readable contrast on all text.
 - Preserve sanitizer boundaries: cooked HTML must pass through `_sanitize_cooked_html`; sanitizer failure must remain plain-text fail-closed.
 - Keep the card useful as a standalone image in chat: title, author, date, stats, content, tags, and source must all remain visible.
+- Topic metadata chips are optional; render only fields present in the topic payload and keep labels text-based.
 - Avoid CSS that depends on browser features likely to be brittle in Playwright screenshots.

@@ -5,6 +5,11 @@
 
 ## [未发布]
 
+### 新增
+- 新增群聊白名单配置 `allowed_group_ids`，留空保持原有全群聊触发行为；配置后仅白名单群聊自动预览，私聊默认允许
+- 新增 `/linuxdo_auth` 认证状态命令，只展示 Cookie 名称和最近认证状态，不泄露 Cookie 值
+- 预览卡片新增 topic 元数据 chips，展示分类、最近活跃日期和 pinned/closed/archived 状态
+
 ### 变更
 - 重做自定义 HTML 预览卡片设计系统：新增 `DESIGN.md` 作为视觉规范，将卡片 CSS 抽为设计 token 驱动的独立模块，并用文本化指标区替代跨平台不稳定的 emoji 图标
 
@@ -33,7 +38,7 @@
 
 ### 变更
 - 移除无效的账号密码自动登录代码（`_auto_login_and_capture`）；`linuxdo_username` / `linuxdo_password` 配置项保留仅为兼容，不再生效
-- 推荐改用长效的 `_t` cookie（约 1 年有效期）而非短效 `_forum_session`（约 2 周）
+- 推荐改用手动复制的完整 linux.do Cookie 请求头；单独 `_t` 或 `_forum_session` 也可用，但都可能短时失效，过期后需要重新获取
 - 配置项 hint、README 登录说明同步更新
 
 ## [1.2.0] - 2026-06-16
