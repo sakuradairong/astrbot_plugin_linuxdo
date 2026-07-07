@@ -29,11 +29,17 @@
     "default": true,
     "hint": "启用后用 Discourse JSON API 拉数据+自定义 HTML 模板渲染（推荐，完整、干净、不受页面截断/懒加载影响）；关闭则走传统页面截图方案。"
   },
+  "allowed_group_ids": {
+    "description": "自动预览群聊白名单",
+    "type": "string",
+    "default": "",
+    "hint": "留空表示所有群聊都允许自动预览；填写后只在这些群聊触发，多个群号可用逗号、空格或换行分隔。私聊默认允许。"
+  },
   "linuxdo_session_cookie": {
     "description": "LinuxDo 会话 Cookie（访问受限主题必填）",
     "type": "string",
     "default": "",
-    "hint": "登录 linux.do → F12 → Application → Cookies → linux.do → 复制 _t（推荐，长效约 1 年）或 _forum_session（短期）的 Value 粘贴到这里。也支持完整 Cookie 头格式如『_t=xxx; _forum_session=yyy』。留空则匿名访问。注意：配置后，聊天中触发的 linux.do 链接都会用该账号读取，可能把受限主题摘要/截图发送到群里；仅建议在可信会话或专用低权限账号中使用。"
+    "hint": "推荐：登录 linux.do → F12 → Network → 刷新页面 → 点开任意发往 https://linux.do 的请求 → 复制 Request Headers 里的完整 Cookie 值粘贴到这里（通常比单独复制 _t 更接近浏览器会话，可带上 _t、_forum_session、cf_clearance 等）。也支持单个 Cookie，如『_t=xxx』或『_forum_session=yyy』。留空则匿名访问。注意：配置后，聊天中触发的 linux.do 链接都会用该账号读取，可能把受限主题摘要/截图发送到群里；Cookie 可能短时失效，请在过期后重新获取；仅建议在可信会话或专用低权限账号中使用。"
   },
   "linuxdo_username": {
     "description": "LinuxDo 用户名（已弃用）",
@@ -45,6 +51,6 @@
     "description": "LinuxDo 密码（已弃用）",
     "type": "string",
     "default": "",
-    "hint": "⚠️ 配合 linuxdo_username 的自动登录已因 hCaptcha 失效。请改用 linuxdo_session_cookie（浏览器复制 _t）。"
+    "hint": "⚠️ 配合 linuxdo_username 的自动登录已因 hCaptcha 失效。请改用 linuxdo_session_cookie（从 Network 复制完整 Cookie 请求头）。"
   }
 }
