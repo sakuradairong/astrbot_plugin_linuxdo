@@ -22,30 +22,10 @@ from astrbot.api.star import Context
 from astrbot.api.star import Star
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
-from .linuxdo_preview import AuthState
-from .linuxdo_preview import LinuxDoTopicData
-from .linuxdo_preview import _auth_status_text
-from .linuxdo_preview import _build_preview_html
-from .linuxdo_preview import _build_summary
-from .linuxdo_preview import _check_login_state
-from .linuxdo_preview import _clean_text
-from .linuxdo_preview import _ensure_authenticated
-from .linuxdo_preview import _extract_content
-from .linuxdo_preview import _extract_content_from_json
-from .linuxdo_preview import _extract_content_from_topic_data
-from .linuxdo_preview import _extract_title
-from .linuxdo_preview import _extract_via_lxml
-from .linuxdo_preview import _extract_via_regex
-from .linuxdo_preview import _fetch_topic_data
-from .linuxdo_preview import _format_count
-from .linuxdo_preview import _has_auto_login
-from .linuxdo_preview import _has_session_cookie
-from .linuxdo_preview import _inject_session_cookie
-from .linuxdo_preview import _is_allowed_chat
-from .linuxdo_preview import _normalize_cooked_urls
-from .linuxdo_preview import _render_html_screenshot
-from .linuxdo_preview import _safe_title
-from .linuxdo_preview import _take_screenshot
+from .linuxdo_preview import AuthState, LinuxDoTopicData, _auth_status_text, _build_preview_html, _build_summary, _clean_text, _ensure_authenticated, _extract_content, _extract_content_from_json, _extract_content_from_topic_data, _extract_title, _extract_via_lxml, _extract_via_regex, _fetch_topic_data, _format_count, _is_allowed_chat, _normalize_cooked_urls, _render_html_screenshot, _safe_title, _take_screenshot
+from .linuxdo_preview.cookie_commands import cookie_status_text
+from .linuxdo_preview.cookie_commands import pull_cookie_session_text
+from .linuxdo_preview.cookie_monitor import sync_cookie_if_due
 
 try:
     from scrapling.fetchers import StealthySession as _StealthySession
@@ -161,6 +141,7 @@ class LinuxDoPreviewPlugin(Star):
 
         session_cls = _get_stealthy_session()
         with session_cls(headless=True, solve_cloudflare=True) as session:
+            self._sync_cookie_if_due(session)
             self._ensure_authenticated(session)
             if use_api_render:
                 title, content, screenshot_path = self._fetch_with_api_render(
@@ -233,20 +214,25 @@ class LinuxDoPreviewPlugin(Star):
             result_path = self._take_screenshot(session, url, screenshot_path)
         return title, content, result_path
 
-    def _has_session_cookie(self) -> bool:
-        return _has_session_cookie(self.config)
-
-    def _has_auto_login(self) -> bool:
-        return _has_auto_login(self.config)
-
-    def _inject_session_cookie(self, session, cookie_value: str = "") -> bool:
-        return _inject_session_cookie(session, self.config, logger, cookie_value)
-
-    def _check_login_state(self, session) -> bool:
-        return _check_login_state(session)
-
     def _ensure_authenticated(self, session) -> bool:
-        return _ensure_authenticated(session, self.config, self._auth_state, self._auth_lock, logger)
+        return _ensure_authenticated(
+            session,
+            self.config,
+            self._auth_state,
+            self._auth_lock,
+            logger,
+            getattr(self, "data_dir", None),
+        )
+
+    def _sync_cookie_if_due(self, session) -> None:
+        result = sync_cookie_if_due(
+            self.config,
+            getattr(self, "data_dir", Path(".")),
+            getattr(self, "_auth_state", AuthState()),
+            session=session,
+        )
+        if result.attempted and not result.ok:
+            logger.warning(f"[LinuxDoPreview] Cookie 同步跳过: {result.category}: {result.message}")
 
     def _extract_content_from_json(self, session, url: str) -> str:
         return _extract_content_from_json(session, url, logger)
@@ -292,7 +278,20 @@ class LinuxDoPreviewPlugin(Star):
 
     @filter.command("linuxdo_auth")
     async def show_auth(self, event: AstrMessageEvent):
-        yield event.plain_result(_auth_status_text(self.config, self._auth_state))
+        yield event.plain_result(
+            _auth_status_text(self.config, self._auth_state, getattr(self, "data_dir", None))
+        )
+
+    @filter.command("linuxdo_cookie_status")
+    async def show_cookie_status(self, event: AstrMessageEvent):
+        yield event.plain_result(cookie_status_text(self.config, getattr(self, "data_dir", Path("."))))
+
+    @filter.command("linuxdo_cookie_pull")
+    async def pull_cookie_session(self, event: AstrMessageEvent):
+        ok, message = pull_cookie_session_text(self.config, getattr(self, "data_dir", Path(".")))
+        if ok:
+            self._auth_state.auth_check_done = False
+        yield event.plain_result(message)
 
     @filter.command("linuxdo_clean")
     async def clean_cache(self, event: AstrMessageEvent):

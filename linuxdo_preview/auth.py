@@ -1,11 +1,60 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 import re
+from types import TracebackType
+from typing import Protocol
+
+from . import cookie_store
 
 
 @dataclass(slots=True)
 class AuthState:
     auth_check_done: bool = False
     logged_in: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _ResolvedCookie:
+    value: str
+    source: str
+
+
+class _Logger(Protocol):
+    def info(self, message: str) -> None: ...
+
+    def warning(self, message: str) -> None: ...
+
+
+class _CookieContext(Protocol):
+    def add_cookies(self, cookies: list[dict[str, str | bool]]) -> None: ...
+
+
+class _FetchResponse(Protocol):
+    status: int
+
+
+class _CookieSession(Protocol):
+    @property
+    def context(self) -> _CookieContext | None: ...
+
+
+class _FetchSession(Protocol):
+    @property
+    def context(self) -> _CookieContext | None: ...
+
+    def fetch(self, url: str, timeout: int) -> _FetchResponse: ...
+
+
+class _AuthLock(Protocol):
+    def __enter__(self) -> bool | None: ...
+
+    def __exit__(
+        self,
+        type: type[BaseException] | None,
+        value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None: ...
 
 
 _COOKIE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
@@ -16,12 +65,30 @@ _KNOWN_COOKIE_NAMES = {
 }
 
 
-def _has_session_cookie(config) -> bool:
-    cookie = config.get("linuxdo_session_cookie", "") or ""
-    return bool(cookie.strip())
+def _manual_session_cookie(config: Mapping[str, str]) -> str:
+    return (config.get("linuxdo_session_cookie", "") or "").strip()
 
 
-def _has_auto_login(config) -> bool:
+def _resolve_session_cookie(config: Mapping[str, str], data_dir: Path | None = None) -> _ResolvedCookie:
+    if data_dir is not None:
+        encryption_key = config.get("linuxdo_cookie_encryption_key", "") or None
+        try:
+            stored_cookie = cookie_store.get_cookie_header_from_session(data_dir, encryption_key)
+        except cookie_store.CookieStoreError:
+            stored_cookie = None
+        if stored_cookie and stored_cookie.strip():
+            return _ResolvedCookie(stored_cookie.strip(), "已保存会话")
+    manual_cookie = _manual_session_cookie(config)
+    if manual_cookie:
+        return _ResolvedCookie(manual_cookie, "手动配置")
+    return _ResolvedCookie("", "无")
+
+
+def _has_session_cookie(config: Mapping[str, str], data_dir: Path | None = None) -> bool:
+    return bool(_resolve_session_cookie(config, data_dir).value)
+
+
+def _has_auto_login(config: Mapping[str, str]) -> bool:
     u = config.get("linuxdo_username", "") or ""
     p = config.get("linuxdo_password", "") or ""
     return bool(u.strip() and p.strip())
@@ -51,9 +118,13 @@ def _parse_cookie_pairs(cookie_str: str) -> list[dict[str, str]]:
     return pairs
 
 
-def _auth_status_text(config, auth_state: AuthState) -> str:
-    cookie_value = (config.get("linuxdo_session_cookie", "") or "").strip()
-    cookie_pairs = _parse_cookie_pairs(cookie_value)
+def _auth_status_text(
+    config: Mapping[str, str],
+    auth_state: AuthState,
+    data_dir: Path | None = None,
+) -> str:
+    resolved_cookie = _resolve_session_cookie(config, data_dir)
+    cookie_pairs = _parse_cookie_pairs(resolved_cookie.value)
     cookie_names = ", ".join(pair["name"] for pair in cookie_pairs) if cookie_pairs else "无"
     if not cookie_pairs:
         login_status = "匿名"
@@ -66,15 +137,22 @@ def _auth_status_text(config, auth_state: AuthState) -> str:
     return (
         "🔐 LinuxDo Preview 认证状态\n"
         f"  Cookie: {'已配置' if cookie_pairs else '未配置'}\n"
+        f"  Cookie 来源: {resolved_cookie.source}\n"
         f"  Cookie 名称: {cookie_names}\n"
         f"  登录状态: {login_status}\n"
         "  提示: 若失效，请重新复制 linux.do 请求里的完整 Cookie 值"
     )
 
 
-def _inject_session_cookie(session, config, logger, cookie_value: str = "") -> bool:
+def _inject_session_cookie(
+    session: _CookieSession,
+    config: Mapping[str, str],
+    logger: _Logger,
+    cookie_value: str = "",
+    data_dir: Path | None = None,
+) -> bool:
     if not cookie_value:
-        cookie_value = (config.get("linuxdo_session_cookie", "") or "").strip()
+        cookie_value = _resolve_session_cookie(config, data_dir).value
     if not cookie_value:
         return False
 
@@ -86,7 +164,7 @@ def _inject_session_cookie(session, config, logger, cookie_value: str = "") -> b
     if not pairs:
         return False
 
-    cookies = []
+    cookies: list[dict[str, str | bool]] = []
     for p in pairs:
         http_only = p["name"] in ("_t", "_forum_session")
         cookies.append({
@@ -106,11 +184,11 @@ def _inject_session_cookie(session, config, logger, cookie_value: str = "") -> b
         )
         return True
     except Exception as e:
-        logger.warning(f"[LinuxDoPreview] Cookie 注入失败: {type(e).__name__}: {e}")
+        logger.warning(f"[LinuxDoPreview] Cookie 注入失败: {type(e).__name__}")
         return False
 
 
-def _check_login_state(session) -> bool:
+def _check_login_state(session: _FetchSession) -> bool:
     try:
         resp = session.fetch("https://linux.do/notifications.json", timeout=30000)
         return resp.status == 200
@@ -118,11 +196,17 @@ def _check_login_state(session) -> bool:
         return False
 
 
-def _ensure_authenticated(session, config, auth_state: AuthState, auth_lock, logger) -> bool:
+def _ensure_authenticated(
+    session: _FetchSession,
+    config: Mapping[str, str],
+    auth_state: AuthState,
+    auth_lock: _AuthLock,
+    logger: _Logger,
+    data_dir: Path | None = None,
+) -> bool:
     with auth_lock:
-        if _has_session_cookie(config):
-            cookie_value = (config.get("linuxdo_session_cookie", "") or "").strip()
-            if not _inject_session_cookie(session, config, logger, cookie_value):
+        if _has_session_cookie(config, data_dir):
+            if not _inject_session_cookie(session, config, logger, data_dir=data_dir):
                 auth_state.auth_check_done = True
                 auth_state.logged_in = False
                 return False

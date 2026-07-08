@@ -39,7 +39,37 @@
     "description": "LinuxDo 会话 Cookie（访问受限主题必填）",
     "type": "string",
     "default": "",
-    "hint": "推荐：登录 linux.do → F12 → Network → 刷新页面 → 点开任意发往 https://linux.do 的请求 → 复制 Request Headers 里的完整 Cookie 值粘贴到这里（通常比单独复制 _t 更接近浏览器会话，可带上 _t、_forum_session、cf_clearance 等）。也支持单个 Cookie，如『_t=xxx』或『_forum_session=yyy』。留空则匿名访问。注意：配置后，聊天中触发的 linux.do 链接都会用该账号读取，可能把受限主题摘要/截图发送到群里；Cookie 可能短时失效，请在过期后重新获取；仅建议在可信会话或专用低权限账号中使用。"
+    "hint": "手动 Cookie 兜底项：登录 linux.do → F12 → Network → 刷新页面 → 点开任意发往 https://linux.do 的请求 → 复制 Request Headers 里的完整 Cookie 值粘贴到这里（通常比单独复制 _t 更接近浏览器会话，可带上 _t、_forum_session、cf_clearance 等）。启用 Cookie 同步并成功拉取后，优先使用加密保存的 Cookie；此处手动 Cookie 仍作为兜底。也支持单个 Cookie，如『_t=xxx』或『_forum_session=yyy』。留空则匿名访问。注意：配置后，聊天中触发的 linux.do 链接都会用该账号读取，可能把受限主题摘要/截图发送到群里；Cookie 可能短时失效，请在过期后重新获取；仅建议在可信会话或专用低权限账号中使用。"
+  },
+  "linuxdo_cookie_sync_enabled": {
+    "description": "启用本地 Cookie 同步",
+    "type": "bool",
+    "default": false,
+    "hint": "启用后可通过 /linuxdo_cookie_pull 从本机 Firefox profile 或 cookies.sqlite 读取 linux.do Cookie 并加密保存。本插件只读取本地路径，不管理 noVNC/Firefox 容器，也不会复制容器文件。"
+  },
+  "linuxdo_firefox_profile_path": {
+    "description": "Firefox profile/cookies.sqlite 本地路径",
+    "type": "string",
+    "default": "",
+    "hint": "填写 AstrBot 进程可访问的本地 Firefox profile 目录或 cookies.sqlite 文件路径；插件只读取该路径下的 cookies.sqlite，不管理 noVNC/Firefox 容器、不启动浏览器、不执行 Docker/container copy。"
+  },
+  "linuxdo_cookie_encryption_key": {
+    "description": "Cookie 加密密钥",
+    "type": "string",
+    "default": "",
+    "hint": "用于加密保存从本地 cookies.sqlite 拉取的 Cookie。请使用随机长字符串并妥善保管；/linuxdo_cookie_status 和 /linuxdo_cookie_pull 不会显示该密钥。"
+  },
+  "linuxdo_cookie_sync_interval_seconds": {
+    "description": "Cookie 自动同步间隔（秒）",
+    "type": "int",
+    "default": 7200,
+    "hint": "启用本地 Cookie 同步后，预览抓取前会按该间隔机会性检查 session.json；缺失或过期时从配置的本地 Firefox profile/cookies.sqlite 重新拉取并加密保存。默认 7200 秒（2 小时），不会启动后台守护或管理 Firefox/noVNC。"
+  },
+  "linuxdo_restricted_topic_url": {
+    "description": "受限主题验证 URL",
+    "type": "string",
+    "default": "",
+    "hint": "可填写一个 linux.do 受限主题 URL；自动同步拉取到候选 Cookie 后，会在本次预览 Session 中临时注入 Cookie 并请求该 URL，HTTP 200 记为验证通过，失败只记录脱敏错误且不阻断预览。"
   },
   "linuxdo_username": {
     "description": "LinuxDo 用户名（已弃用）",
