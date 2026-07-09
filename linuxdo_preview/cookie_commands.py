@@ -48,6 +48,14 @@ def _iso_now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _verification_status(session: Mapping[str, object]) -> str:
+    if session.get("verified"):
+        return "已通过"
+    if session.get("verified_at") or session.get("verification_url") or session.get("last_error"):
+        return "未通过"
+    return "未验证"
+
+
 def cookie_status_text(config: Mapping[str, object], data_dir: Path) -> str:
     session = cookie_store.load_session(data_dir)
     manual_cookie = _manual_cookie(config)
@@ -60,7 +68,7 @@ def cookie_status_text(config: Mapping[str, object], data_dir: Path) -> str:
 
     names = session.get("names", [])
     cookie_names = ", ".join(names) if names else "无"
-    verified = "已通过" if session.get("verified") else "未通过"
+    verified = _verification_status(session)
     return (
         "🍪 LinuxDo Cookie 状态\n"
         "  已保存加密会话: 已存在\n"

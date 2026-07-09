@@ -80,6 +80,41 @@ class TestCookieOperatorCommands(unittest.TestCase):
         self.assertNotIn("secret-key", output)
         self.assertNotIn("/private/profile", output)
 
+    def test_cookie_status_reports_unverified_when_verification_was_not_configured(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            plugin = _plugin(
+                {"linuxdo_cookie_encryption_key": "secret-key"},
+                data_dir,
+            )
+            metadata = {
+                "encrypted_cookie": "encrypted-payload-secret",
+                "cookie_count": 2,
+                "names": ["_t", "cf_clearance"],
+                "updated_at": "2026-07-07T10:11:12Z",
+                "source": "firefox-cookies-sqlite",
+                "verified": False,
+                "verified_at": None,
+                "verification_url": None,
+                "last_error": None,
+            }
+
+            async def _collect():
+                with patch(
+                    "astrbot_plugin_linuxdo.linuxdo_preview.cookie_commands.cookie_store.load_session",
+                    return_value=metadata,
+                ):
+                    return [item async for item in plugin.show_cookie_status(_Event())]
+
+            results = asyncio.run(_collect())
+
+        self.assertEqual(len(results), 1)
+        output = results[0]
+        self.assertIn("验证状态: 未验证", output)
+        self.assertNotIn("验证状态: 未通过", output)
+        self.assertNotIn("encrypted-payload-secret", output)
+        self.assertNotIn("secret-key", output)
+
     def test_cookie_pull_extracts_configured_profile_and_resets_auth_check(self):
         with tempfile.TemporaryDirectory() as tmp:
             data_dir = Path(tmp)
